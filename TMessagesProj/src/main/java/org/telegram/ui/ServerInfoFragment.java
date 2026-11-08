@@ -21,6 +21,7 @@ import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
+import org.telegram.utils.proxy.CloudflaredTunnelManager;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
@@ -116,7 +117,16 @@ public class ServerInfoFragment extends BaseFragment {
             long start = System.currentTimeMillis();
             int ms;
             try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(server.host, server.port), 3000);
+                String host = server.host;
+                int port = server.port;
+                if (server.useCloudflared) {
+                    if (!CloudflaredTunnelManager.awaitLocalListener(server.host, 5000)) {
+                        throw new java.io.IOException("Cloudflared tunnel is unavailable");
+                    }
+                    host = "127.0.0.1";
+                    port = CloudflaredTunnelManager.getLocalPort(server.host);
+                }
+                socket.connect(new InetSocketAddress(host, port), 3000);
                 ms = (int) (System.currentTimeMillis() - start);
             } catch (Exception e) {
                 ms = -1;
@@ -182,7 +192,9 @@ public class ServerInfoFragment extends BaseFragment {
 
         // Endpoint
         TextView epTv = new TextView(context);
-        epTv.setText(server.host + ":" + server.port);
+        epTv.setText(server.useCloudflared
+                ? server.host + " (Cloudflared)"
+                : server.host + ":" + server.port);
         epTv.setTextSize(12);
         epTv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
         epTv.setGravity(Gravity.CENTER);

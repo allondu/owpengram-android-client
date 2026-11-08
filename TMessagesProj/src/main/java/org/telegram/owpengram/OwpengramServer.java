@@ -16,6 +16,7 @@ public class OwpengramServer {
     public boolean isTelegram;
     public boolean multiDc;
     public int mainDcId;
+    public boolean useCloudflared;
 
     public int effectiveMainDcId() {
         if (mainDcId > 0) return mainDcId;
@@ -33,6 +34,7 @@ public class OwpengramServer {
         if (logoPath != null && !logoPath.isEmpty()) obj.put("logoPath", logoPath);
         if (multiDc) obj.put("multiDc", true);
         if (mainDcId > 0) obj.put("mainDcId", mainDcId);
+        if (useCloudflared) obj.put("useCloudflared", true);
         return obj;
     }
 
@@ -48,6 +50,7 @@ public class OwpengramServer {
         s.isOfficial = false;
         s.multiDc = obj.optBoolean("multiDc", false);
         s.mainDcId = obj.optInt("mainDcId", 0);
+        s.useCloudflared = obj.optBoolean("useCloudflared", false);
         return s;
     }
 }

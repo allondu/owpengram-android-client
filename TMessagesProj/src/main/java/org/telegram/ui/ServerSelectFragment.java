@@ -28,6 +28,7 @@ import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.utils.proxy.CloudflaredTunnelManager;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
@@ -180,12 +181,18 @@ public class ServerSelectFragment extends BaseFragment {
 
     private void pingServer(OwpengramServer s) {
         final String id   = s.id;
-        final String host = s.host;
-        final int port    = s.port;
         pingCache.put(id, PING_CHECKING);
         updateRow(id);
         pingPool.submit(() -> {
-            int ms = pingTcp(host, port);
+            int ms;
+            if (s.useCloudflared) {
+                int port = CloudflaredTunnelManager.start(s.host);
+                ms = port > 0 && CloudflaredTunnelManager.awaitLocalListener(s.host, 5000)
+                        ? pingTcp("127.0.0.1", port)
+                        : -1;
+            } else {
+                ms = pingTcp(s.host, s.port);
+            }
             uiHandler.post(() -> {
                 if (destroyed) return;
                 pingCache.put(id, ms);

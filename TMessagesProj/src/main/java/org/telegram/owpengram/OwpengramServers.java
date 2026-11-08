@@ -14,6 +14,7 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
+import org.telegram.utils.proxy.CloudflaredTunnelManager;
 
 import org.telegram.messenger.AndroidUtilities;
 
@@ -372,10 +373,16 @@ public class OwpengramServers {
         int mainDc = server.mainDcId > 0
                 ? server.mainDcId
                 : (server.isTelegram ? 2 : 1);
+        String connectionHost = server.host;
+        int connectionPort = server.port;
+        if (server.useCloudflared) {
+            connectionHost = "127.0.0.1";
+            connectionPort = CloudflaredTunnelManager.start(server.host);
+        }
         ConnectionsManager.native_applyServerConfig(
                 accountNum,
-                server.host,
-                server.port,
+                connectionHost,
+                connectionPort,
                 server.isTelegram,
                 mainDc,
                 key,

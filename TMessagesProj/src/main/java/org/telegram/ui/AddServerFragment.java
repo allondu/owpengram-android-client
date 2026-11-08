@@ -28,6 +28,7 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.R;
 import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
+import org.telegram.utils.proxy.CloudflaredTunnelManager;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
@@ -60,6 +61,8 @@ public class AddServerFragment extends BaseFragment {
     private View mainDcRow;
     private View multiDcToggle;
     private boolean multiDcEnabled = false;
+    private View cloudflaredToggle;
+    private boolean useCloudflared;
 
     private TextView advancedHeader;
     private View advancedSection;
@@ -160,6 +163,21 @@ public class AddServerFragment extends BaseFragment {
         });
         content.addView(section2);
 
+        cloudflaredToggle = buildToggleRow(context, "Use Cloudflared",
+                "TCP tunnel via Cloudflare Access; UDP calls are not tunneled", useCloudflared);
+        section2.addView(cloudflaredToggle);
+        cloudflaredToggle.setOnClickListener(v -> {
+            useCloudflared = !useCloudflared;
+            updateCloudflaredToggleState();
+            addressField.setHint(useCloudflared ? "Cloudflare hostname (e.g. chat.example.com)" : "Address (host:port)");
+            if (useCloudflared) {
+                lastFetchedAddress = addressField.getText().toString().trim();
+            } else {
+                lastFetchedAddress = "";
+                fetchPublicKeyForAddress();
+            }
+        });
+
         // Section: advanced (collapsed by default -- only matters for servers
         // that don't serve their key/DC over /owpengram/server-info, or to
         // override what auto-fetch filled in).
@@ -206,7 +224,10 @@ public class AddServerFragment extends BaseFragment {
             mainDcField.setText(String.valueOf(editingServer.mainDcId > 0
                     ? editingServer.mainDcId : DEFAULT_SINGLE_MAIN_DC));
             multiDcEnabled = editingServer.multiDc;
+            useCloudflared = editingServer.useCloudflared;
             updateToggleState();
+            updateCloudflaredToggleState();
+            addressField.setHint(useCloudflared ? "Cloudflare hostname (e.g. chat.example.com)" : "Address (host:port)");
             updateMainDcVisibility();
             if (editingServer.logoPath != null && !editingServer.logoPath.isEmpty()) {
                 fetchedLogoPath = editingServer.logoPath;
@@ -253,6 +274,9 @@ public class AddServerFragment extends BaseFragment {
     }
 
     private void fetchPublicKeyForAddress() {
+        if (useCloudflared) {
+            return;
+        }
         String address = addressField.getText().toString().trim();
         if (address.isEmpty() || address.equals(lastFetchedAddress)) {
             return;
@@ -386,16 +410,24 @@ public class AddServerFragment extends BaseFragment {
             return;
         }
         if (host.isEmpty()) {
-            showFieldError(addressField, "Enter host or IP");
+            showFieldError(addressField, useCloudflared ? "Enter the Cloudflare hostname" : "Enter host or IP");
             return;
         }
         int port;
-        try {
-            port = Integer.parseInt(parts[1]);
-            if (port < 1 || port > 65535) throw new NumberFormatException();
-        } catch (NumberFormatException e) {
-            showFieldError(addressField, "Invalid address, expected host:port");
-            return;
+        if (useCloudflared) {
+            if (!CloudflaredTunnelManager.isValidHostname(host) || !parts[1].isEmpty()) {
+                showFieldError(addressField, "Enter a Cloudflare hostname without a port");
+                return;
+            }
+            port = 0;
+        } else {
+            try {
+                port = Integer.parseInt(parts[1]);
+                if (port < 1 || port > 65535) throw new NumberFormatException();
+            } catch (NumberFormatException e) {
+                showFieldError(addressField, "Invalid address, expected host:port");
+                return;
+            }
         }
 
         // Reuse editingServer as the object we mutate even when it's just a
@@ -422,6 +454,7 @@ public class AddServerFragment extends BaseFragment {
         server.rsaPublicKey = rsaField.getText().toString().trim();
         server.multiDc     = multiDcEnabled;
         server.mainDcId    = mainDc;
+        server.useCloudflared = useCloudflared;
         if (fetchedLogoPath != null) {
             server.logoPath = fetchedLogoPath;
         }
@@ -576,6 +609,13 @@ public class AddServerFragment extends BaseFragment {
         if (multiDcToggle != null) {
             TextView tv = multiDcToggle.findViewWithTag("toggle");
             if (tv != null) updateToggleText(tv, multiDcEnabled);
+        }
+    }
+
+    private void updateCloudflaredToggleState() {
+        if (cloudflaredToggle != null) {
+            TextView tv = cloudflaredToggle.findViewWithTag("toggle");
+            if (tv != null) updateToggleText(tv, useCloudflared);
         }
     }
 
