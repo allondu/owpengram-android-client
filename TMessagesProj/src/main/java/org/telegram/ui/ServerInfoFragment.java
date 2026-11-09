@@ -154,10 +154,14 @@ public class ServerInfoFragment extends BaseFragment {
             if (statusDot != null) statusDot.setBackground(
                     Theme.createCircleDrawable(dp(10), 0xFFE53935));
         } else {
-            int color = ms < 100 ? 0xFF4CAF82 : ms < 300 ? 0xFFE8A838 : 0xFFE53935;
-            statusTv.setText("Online");
+            int color = server.useCloudflared
+                    ? 0xFF4CAF82
+                    : ms < 100 ? 0xFF4CAF82 : ms < 300 ? 0xFFE8A838 : 0xFFE53935;
+            statusTv.setText(server.useCloudflared ? "Tunnel ready" : "Online");
             statusTv.setTextColor(color);
-            latencyTv.setText(ms + " ms");
+            latencyTv.setText(server.useCloudflared
+                    ? "Origin latency unavailable"
+                    : ms + " ms");
             latencyTv.setTextColor(color);
             if (statusDot != null) statusDot.setBackground(
                     Theme.createCircleDrawable(dp(10), color));

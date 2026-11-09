@@ -682,8 +682,12 @@ public class ServerSelectFragment extends BaseFragment {
                 statusDot.setAlpha(1f);
                 statusDot.setBackground(Theme.createCircleDrawable(dp(8), dotColor));
             } else {
-                dotColor = pingMs < 100 ? COLOR_GOOD : pingMs < 300 ? COLOR_WARN : COLOR_BAD;
-                statusTv.setText("Online · " + pingMs + " ms");
+                dotColor = server.useCloudflared
+                        ? COLOR_GOOD
+                        : pingMs < 100 ? COLOR_GOOD : pingMs < 300 ? COLOR_WARN : COLOR_BAD;
+                statusTv.setText(server.useCloudflared
+                        ? "Tunnel ready"
+                        : "Online · " + pingMs + " ms");
                 statusTv.setTextColor(dotColor);
                 statusDot.setAlpha(1f);
                 statusDot.setBackground(Theme.createCircleDrawable(dp(8), dotColor));

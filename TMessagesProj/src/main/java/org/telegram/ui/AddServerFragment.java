@@ -170,12 +170,8 @@ public class AddServerFragment extends BaseFragment {
             useCloudflared = !useCloudflared;
             updateCloudflaredToggleState();
             addressField.setHint(useCloudflared ? "Cloudflare hostname (e.g. chat.example.com)" : "Address (host:port)");
-            if (useCloudflared) {
-                lastFetchedAddress = addressField.getText().toString().trim();
-            } else {
-                lastFetchedAddress = "";
-                fetchPublicKeyForAddress();
-            }
+            lastFetchedAddress = "";
+            fetchPublicKeyForAddress();
         });
 
         // Section: advanced (collapsed by default -- only matters for servers
@@ -274,9 +270,6 @@ public class AddServerFragment extends BaseFragment {
     }
 
     private void fetchPublicKeyForAddress() {
-        if (useCloudflared) {
-            return;
-        }
         String address = addressField.getText().toString().trim();
         if (address.isEmpty() || address.equals(lastFetchedAddress)) {
             return;
@@ -284,13 +277,26 @@ public class AddServerFragment extends BaseFragment {
         String[] parts = parseAddress(address);
         String host = parts[0];
         int port;
-        try {
-            port = Integer.parseInt(parts[1]);
-        } catch (NumberFormatException e) {
+        if (host.isEmpty()) {
             return;
         }
-        if (host.isEmpty() || port <= 0) {
-            return;
+        if (useCloudflared) {
+            if (!parts[1].isEmpty() || !CloudflaredTunnelManager.isValidHostname(host)) {
+                return;
+            }
+            port = CloudflaredTunnelManager.start(host);
+            if (port == 0) {
+                return;
+            }
+        } else {
+            try {
+                port = Integer.parseInt(parts[1]);
+            } catch (NumberFormatException e) {
+                return;
+            }
+            if (port <= 0) {
+                return;
+            }
         }
         lastFetchedAddress = address;
         if (currentInfoFetch != null) {
@@ -301,8 +307,31 @@ public class AddServerFragment extends BaseFragment {
             currentIconFetch = null;
         }
         addressSpinner.setVisibility(View.VISIBLE);
+        if (useCloudflared) {
+            final int localPort = port;
+            new Thread(() -> {
+                boolean ready = CloudflaredTunnelManager.awaitLocalListener(host, 15000);
+                AndroidUtilities.runOnUIThread(() -> {
+                    if (!address.equals(lastFetchedAddress) || addressSpinner == null) {
+                        return;
+                    }
+                    if (!ready) {
+                        addressSpinner.setVisibility(View.GONE);
+                        return;
+                    }
+                    fetchServerInfo(address, "127.0.0.1", localPort);
+                });
+            }, "CloudflaredServerInfo").start();
+        } else {
+            fetchServerInfo(address, host, port);
+        }
+    }
+
+    private void fetchServerInfo(String address, String host, int port) {
         currentInfoFetch = OwpengramServers.fetchServerInfo(host, port, result -> {
-            addressSpinner.setVisibility(View.GONE);
+            if (addressSpinner != null) {
+                addressSpinner.setVisibility(View.GONE);
+            }
             if (result == null || !lastFetchedAddress.equals(address)) {
                 return;
             }

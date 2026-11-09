@@ -70,6 +70,15 @@ android {
         }
     }
 
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            universalApk false
+        }
+    }
+
     buildTypes {
         // Keep the distributable build on APP_PACKAGE so it shares the stable
         // app identity; the debug APK gets its own id for side-by-side testing.
@@ -123,7 +132,6 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
-            outputFileName = "app.apk"
             output.versionCodeOverride = defaultConfig.versionCode * 10 + variant.productFlavors.get(0).abiVersionCode
         }
     }

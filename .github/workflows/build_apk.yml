@@ -174,20 +174,21 @@ jobs:
             :TMessagesProj_AppStandalone:assembleAfat$task
           ccache --show-stats
 
-      # debug: the universal APK. stable: the universal APK plus one APK per ABI
-      # (arm64-v8a fits almost every current phone).
+      # ABI-specific APKs avoid shipping native libraries for other architectures.
       - name: Collect APKs
         id: apk
         run: |
           base="owpengram-${{ matrix.variant }}-O${{ steps.version.outputs.number }}-${GITHUB_SHA::7}"
           mkdir -p dist
-          cp "$APK_DIR/app.apk" "dist/$base-universal.apk"
-          if [ "${{ matrix.variant }}" = stable ]; then
-            for apk in "$APK_DIR"/app-*.apk; do
-              abi="$(basename "$apk" .apk)"; abi="${abi#app-}"
-              cp "$apk" "dist/$base-$abi.apk"
-            done
+          mapfile -t apks < <(find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' -print | sort)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "::error::No APK outputs found in $APK_DIR"
+            exit 1
           fi
+          for apk in "${apks[@]}"; do
+            output="$(basename "$apk" .apk)"
+            cp "$apk" "dist/$base-$output.apk"
+          done
           ls -l dist
           echo "name=$base" >> "$GITHUB_OUTPUT"
 
