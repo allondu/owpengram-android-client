@@ -176,7 +176,9 @@ public class ServerSelectFragment extends BaseFragment {
 
     private void pingAll() {
         for (OwpengramServer s : servers) {
-            pingServer(s);
+            if (!s.useCloudflared) {
+                pingServer(s);
+            }
         }
     }
 
@@ -671,7 +673,13 @@ public class ServerSelectFragment extends BaseFragment {
 
             stopPulse();
             int dotColor;
-            if (pingMs == null || pingMs == PING_CHECKING) {
+            if (server.useCloudflared && pingMs == null) {
+                dotColor = COLOR_IDLE;
+                statusTv.setText("Tunnel starts on connect");
+                statusTv.setTextColor(COLOR_IDLE);
+                statusDot.setAlpha(1f);
+                statusDot.setBackground(Theme.createCircleDrawable(dp(8), dotColor));
+            } else if (pingMs == null || pingMs == PING_CHECKING) {
                 dotColor = COLOR_IDLE;
                 statusTv.setText("Checking…");
                 statusTv.setTextColor(COLOR_IDLE);

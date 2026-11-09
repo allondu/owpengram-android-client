@@ -21,7 +21,6 @@ import org.telegram.messenger.R;
 import org.telegram.messenger.UserConfig;
 import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
-import org.telegram.utils.proxy.CloudflaredTunnelManager;
 import org.telegram.ui.ActionBar.ActionBar;
 import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
@@ -111,22 +110,18 @@ public class ServerInfoFragment extends BaseFragment {
     // --- Ping ---
 
     private void pingServer() {
+        if (server.useCloudflared) {
+            pinging = false;
+            updateStatus(-3);
+            return;
+        }
         pinging = true;
         updateStatus(-2); // checking
         pingPool.submit(() -> {
             long start = System.currentTimeMillis();
             int ms;
             try (Socket socket = new Socket()) {
-                String host = server.host;
-                int port = server.port;
-                if (server.useCloudflared) {
-                    if (!CloudflaredTunnelManager.awaitLocalListener(server.host, 5000)) {
-                        throw new java.io.IOException("Cloudflared tunnel is unavailable");
-                    }
-                    host = "127.0.0.1";
-                    port = CloudflaredTunnelManager.getLocalPort(server.host);
-                }
-                socket.connect(new InetSocketAddress(host, port), 3000);
+                socket.connect(new InetSocketAddress(server.host, server.port), 3000);
                 ms = (int) (System.currentTimeMillis() - start);
             } catch (Exception e) {
                 ms = -1;
@@ -147,6 +142,14 @@ public class ServerInfoFragment extends BaseFragment {
             latencyTv.setText("");
             if (statusDot != null) statusDot.setBackground(
                     Theme.createCircleDrawable(dp(10), 0xFFAAAAAA));
+        } else if (ms == -3) {
+            int color = Theme.getColor(Theme.key_windowBackgroundWhiteGrayText);
+            statusTv.setText("Tunnel starts on connect");
+            statusTv.setTextColor(color);
+            latencyTv.setText("");
+            if (statusDot != null) {
+                statusDot.setBackground(Theme.createCircleDrawable(dp(10), color));
+            }
         } else if (ms < 0) {
             statusTv.setText("Offline");
             statusTv.setTextColor(0xFFE53935);

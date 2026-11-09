@@ -21,6 +21,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
@@ -55,6 +56,7 @@ public class AddServerFragment extends BaseFragment {
     private EditTextBoldCursor nameField;
     private EditTextBoldCursor addressField;
     private ProgressBar addressSpinner;
+    private TextView fetchCloudflaredInfoButton;
     private EditTextBoldCursor descField;
     private EditTextBoldCursor rsaField;
     private EditTextBoldCursor mainDcField;
@@ -82,6 +84,7 @@ public class AddServerFragment extends BaseFragment {
     // applied to the server on save.
     private String fetchedLogoPath;
     private final Runnable fetchDebounceRunnable = this::fetchPublicKeyForAddress;
+    private int cloudflaredFetchGeneration;
     private static final int FETCH_DEBOUNCE_MS = 500;
     private static final int REQUEST_PICK_ICON = 42;
     // Matches SaveCustomServerLogo's target size on the desktop client, so a
@@ -157,6 +160,10 @@ public class AddServerFragment extends BaseFragment {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {}
             @Override public void afterTextChanged(Editable s) {
+                cloudflaredFetchGeneration++;
+                if (fetchCloudflaredInfoButton != null) {
+                    fetchCloudflaredInfoButton.setEnabled(true);
+                }
                 addressField.removeCallbacks(fetchDebounceRunnable);
                 addressField.postDelayed(fetchDebounceRunnable, FETCH_DEBOUNCE_MS);
             }
@@ -164,10 +171,21 @@ public class AddServerFragment extends BaseFragment {
         content.addView(section2);
 
         cloudflaredToggle = buildToggleRow(context, "Use Cloudflared",
-                "TCP tunnel via Cloudflare Access; UDP calls are not tunneled", useCloudflared);
+                "TCP tunnel via Cloudflare Access; calls need a reachable TCP relay", useCloudflared);
         section2.addView(cloudflaredToggle);
+        fetchCloudflaredInfoButton = new TextView(context);
+        fetchCloudflaredInfoButton.setText("Fetch server info through Cloudflared");
+        fetchCloudflaredInfoButton.setTextSize(14);
+        fetchCloudflaredInfoButton.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlueText));
+        fetchCloudflaredInfoButton.setGravity(Gravity.CENTER);
+        fetchCloudflaredInfoButton.setPadding(dp(16), dp(12), dp(16), dp(12));
+        fetchCloudflaredInfoButton.setBackground(Theme.getSelectorDrawable(true));
+        fetchCloudflaredInfoButton.setVisibility(View.GONE);
+        fetchCloudflaredInfoButton.setOnClickListener(v -> fetchCloudflaredServerInfo());
+        section2.addView(fetchCloudflaredInfoButton);
         cloudflaredToggle.setOnClickListener(v -> {
             useCloudflared = !useCloudflared;
+            cloudflaredFetchGeneration++;
             updateCloudflaredToggleState();
             addressField.setHint(useCloudflared ? "Cloudflare hostname (e.g. chat.example.com)" : "Address (host:port)");
             lastFetchedAddress = "";
@@ -233,14 +251,9 @@ public class AddServerFragment extends BaseFragment {
             // tap -- Advanced only collapses by default for the new-server,
             // auto-fetch-does-everything case.
             toggleAdvanced();
-            // An owpg://addserver link only has to carry host+port -- an
-            // OwpenGram server answers with its own name/description/key/DC
-            // on request (the same discovery a hand-typed address triggers
-            // via the TextWatcher below), so a link for one of our own
-            // servers can stay short. A non-OwpenGram/custom backend that
-            // doesn't implement that endpoint needs the key spelled out in
-            // the link itself instead -- rsaPublicKey is then already
-            // non-empty here, so no fetch is triggered.
+            // Direct server metadata is fetched by the address watcher.
+            // Cloudflared profiles require the explicit fetch button so merely
+            // opening or saving the form never starts a tunnel.
             if (editingServer.rsaPublicKey == null || editingServer.rsaPublicKey.isEmpty()) {
                 fetchPublicKeyForAddress();
             }
@@ -250,6 +263,21 @@ public class AddServerFragment extends BaseFragment {
         ((FrameLayout) fragmentView).addView(scroll, LayoutHelper.createFrame(
                 LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT));
         return fragmentView;
+    }
+
+    @Override
+    public void onFragmentDestroy() {
+        cloudflaredFetchGeneration++;
+        if (addressField != null) {
+            addressField.removeCallbacks(fetchDebounceRunnable);
+        }
+        if (currentInfoFetch != null) {
+            currentInfoFetch.cancel(true);
+        }
+        if (currentIconFetch != null) {
+            currentIconFetch.cancel(true);
+        }
+        super.onFragmentDestroy();
     }
 
     // --- Address parsing + auto-fetch ---
@@ -313,13 +341,74 @@ public class AddServerFragment extends BaseFragment {
         fetchServerInfo(address, host, port);
     }
 
+    private void fetchCloudflaredServerInfo() {
+        String address = addressField.getText().toString().trim();
+        String[] parts = parseAddress(address);
+        String host = parts[0];
+        if (!CloudflaredTunnelManager.isValidHostname(host) || !parts[1].isEmpty()) {
+            showFieldError(addressField, "Enter a Cloudflare hostname without a port");
+            return;
+        }
+        final int generation = ++cloudflaredFetchGeneration;
+        lastFetchedAddress = address;
+        if (currentInfoFetch != null) {
+            currentInfoFetch.cancel(true);
+            currentInfoFetch = null;
+        }
+        if (currentIconFetch != null) {
+            currentIconFetch.cancel(true);
+            currentIconFetch = null;
+        }
+        addressSpinner.setVisibility(View.VISIBLE);
+        fetchCloudflaredInfoButton.setEnabled(false);
+        new Thread(() -> {
+            int localPort = CloudflaredTunnelManager.start(host);
+            boolean ready = localPort > 0
+                    && CloudflaredTunnelManager.awaitLocalListener(host, 15000);
+            AndroidUtilities.runOnUIThread(() -> {
+                if (generation != cloudflaredFetchGeneration || addressSpinner == null) {
+                    return;
+                }
+                fetchCloudflaredInfoButton.setEnabled(true);
+                if (!ready) {
+                    addressSpinner.setVisibility(View.GONE);
+                    Context activity = getParentActivity();
+                    if (activity != null) {
+                        Toast.makeText(activity,
+                                "Cloudflared could not connect. Check the hostname and Cloudflare Access.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                    return;
+                }
+                fetchServerInfo(address, "127.0.0.1", localPort, true);
+            });
+        }, "CloudflaredServerInfo").start();
+    }
+
     private void fetchServerInfo(String address, String host, int port) {
+        fetchServerInfo(address, host, port, false);
+    }
+
+    private void fetchServerInfo(String address, String host, int port, boolean throughCloudflared) {
         currentInfoFetch = OwpengramServers.fetchServerInfo(host, port, result -> {
             if (addressSpinner != null) {
                 addressSpinner.setVisibility(View.GONE);
             }
             if (result == null || !lastFetchedAddress.equals(address)) {
+                if (throughCloudflared && result == null && addressField != null
+                        && address.equals(addressField.getText().toString().trim())) {
+                    fetchCloudflaredInfoButton.setEnabled(true);
+                    Context activity = getParentActivity();
+                    if (activity != null) {
+                        Toast.makeText(activity,
+                                "Could not fetch server info through Cloudflared.",
+                                Toast.LENGTH_LONG).show();
+                    }
+                }
                 return;
+            }
+            if (throughCloudflared) {
+                fetchCloudflaredInfoButton.setEnabled(true);
             }
             // Always overwrite -- the server is the source of truth once it
             // answers, even if the user had typed/pasted something already.
@@ -631,6 +720,9 @@ public class AddServerFragment extends BaseFragment {
         if (cloudflaredToggle != null) {
             TextView tv = cloudflaredToggle.findViewWithTag("toggle");
             if (tv != null) updateToggleText(tv, useCloudflared);
+        }
+        if (fetchCloudflaredInfoButton != null) {
+            fetchCloudflaredInfoButton.setVisibility(useCloudflared ? View.VISIBLE : View.GONE);
         }
     }
 
