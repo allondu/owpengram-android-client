@@ -274,29 +274,32 @@ public class AddServerFragment extends BaseFragment {
         if (address.isEmpty() || address.equals(lastFetchedAddress)) {
             return;
         }
+        if (useCloudflared) {
+            lastFetchedAddress = address;
+            if (currentInfoFetch != null) {
+                currentInfoFetch.cancel(true);
+                currentInfoFetch = null;
+            }
+            if (currentIconFetch != null) {
+                currentIconFetch.cancel(true);
+                currentIconFetch = null;
+            }
+            addressSpinner.setVisibility(View.GONE);
+            return;
+        }
         String[] parts = parseAddress(address);
         String host = parts[0];
         int port;
         if (host.isEmpty()) {
             return;
         }
-        if (useCloudflared) {
-            if (!parts[1].isEmpty() || !CloudflaredTunnelManager.isValidHostname(host)) {
-                return;
-            }
-            port = CloudflaredTunnelManager.start(host);
-            if (port == 0) {
-                return;
-            }
-        } else {
-            try {
-                port = Integer.parseInt(parts[1]);
-            } catch (NumberFormatException e) {
-                return;
-            }
-            if (port <= 0) {
-                return;
-            }
+        try {
+            port = Integer.parseInt(parts[1]);
+        } catch (NumberFormatException e) {
+            return;
+        }
+        if (port <= 0) {
+            return;
         }
         lastFetchedAddress = address;
         if (currentInfoFetch != null) {
@@ -307,24 +310,7 @@ public class AddServerFragment extends BaseFragment {
             currentIconFetch = null;
         }
         addressSpinner.setVisibility(View.VISIBLE);
-        if (useCloudflared) {
-            final int localPort = port;
-            new Thread(() -> {
-                boolean ready = CloudflaredTunnelManager.awaitLocalListener(host, 15000);
-                AndroidUtilities.runOnUIThread(() -> {
-                    if (!address.equals(lastFetchedAddress) || addressSpinner == null) {
-                        return;
-                    }
-                    if (!ready) {
-                        addressSpinner.setVisibility(View.GONE);
-                        return;
-                    }
-                    fetchServerInfo(address, "127.0.0.1", localPort);
-                });
-            }, "CloudflaredServerInfo").start();
-        } else {
-            fetchServerInfo(address, host, port);
-        }
+        fetchServerInfo(address, host, port);
     }
 
     private void fetchServerInfo(String address, String host, int port) {

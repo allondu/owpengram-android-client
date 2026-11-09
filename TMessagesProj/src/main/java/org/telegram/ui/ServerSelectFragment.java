@@ -259,7 +259,9 @@ public class ServerSelectFragment extends BaseFragment {
         } else if ("add".equals(o)) {
             presentFragment(new AddServerFragment(null, saved -> {
                 reloadServers();
-                pingServer(saved);
+                if (!saved.useCloudflared) {
+                    pingServer(saved);
+                }
             }));
         }
     }
