@@ -72,6 +72,7 @@ public class ServerSelectFragment extends BaseFragment {
 
     // Ping cache value used while a check is still running.
     private static final int PING_CHECKING = -2;
+    private static final int TUNNEL_UNAVAILABLE = -3;
 
     private static final int CONNECT_TIMEOUT_MS = 20000;
 
@@ -184,15 +185,7 @@ public class ServerSelectFragment extends BaseFragment {
         pingCache.put(id, PING_CHECKING);
         updateRow(id);
         pingPool.submit(() -> {
-            int ms;
-            if (s.useCloudflared) {
-                int port = CloudflaredTunnelManager.start(s.host);
-                ms = port > 0 && CloudflaredTunnelManager.awaitLocalListener(s.host, 5000)
-                        ? pingTcp("127.0.0.1", port)
-                        : -1;
-            } else {
-                ms = pingTcp(s.host, s.port);
-            }
+            int ms = checkServerConnection(s, 5000);
             uiHandler.post(() -> {
                 if (destroyed) return;
                 pingCache.put(id, ms);
@@ -209,6 +202,17 @@ public class ServerSelectFragment extends BaseFragment {
         } catch (Exception e) {
             return -1;
         }
+    }
+
+    private int checkServerConnection(OwpengramServer server, long tunnelTimeoutMs) {
+        if (!server.useCloudflared) {
+            return pingTcp(server.host, server.port);
+        }
+        int port = CloudflaredTunnelManager.start(server.host);
+        if (port == 0 || !CloudflaredTunnelManager.awaitLocalListener(server.host, tunnelTimeoutMs)) {
+            return TUNNEL_UNAVAILABLE;
+        }
+        return pingTcp("127.0.0.1", port);
     }
 
     private void updateRow(String serverId) {
@@ -276,19 +280,33 @@ public class ServerSelectFragment extends BaseFragment {
                     LimitReachedBottomSheet.TYPE_ACCOUNTS, currentAccount, null));
             return;
         }
-        // Online check first, exactly like desktop CheckServerOnline before joining.
+        // Check the configured route before joining. Tunnel profiles must be
+        // checked through their local Cloudflared listener, never host:0.
         pingPool.submit(() -> {
-            int ms = pingTcp(server.host, server.port);
+            int ms = checkServerConnection(server, 15000);
             uiHandler.post(() -> {
                 if (destroyed) return;
                 pingCache.put(server.id, ms);
                 updateRow(server.id);
                 if (ms >= 0) {
                     proceedJoin(server);
+                } else if (server.useCloudflared) {
+                    AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
+                    b.setTitle("Cloudflared unavailable");
+                    b.setMessage(ms == TUNNEL_UNAVAILABLE
+                            ? "The app couldn't start a local tunnel for " + server.host
+                                + ". Check the Cloudflare Access/TCP route and try again."
+                            : "The tunnel opened, but " + server.name + " could not be reached through "
+                                + server.host + ". Check the Cloudflare TCP route's origin and try again.");
+                    b.setPositiveButton("OK", null);
+                    showDialog(b.create());
                 } else {
                     AlertDialog.Builder b = new AlertDialog.Builder(getParentActivity());
                     b.setTitle("Server unreachable");
-                    b.setMessage("Couldn't reach " + server.name + " (" + server.host + ":" + server.port + "). Try to connect anyway?");
+                    String endpoint = server.useCloudflared
+                            ? server.host + " through Cloudflared"
+                            : server.host + ":" + server.port;
+                    b.setMessage("Couldn't reach " + server.name + " (" + endpoint + "). Try to connect anyway?");
                     b.setPositiveButton("Connect", (d, w) -> proceedJoin(server));
                     b.setNegativeButton("Cancel", null);
                     showDialog(b.create());
@@ -645,7 +663,9 @@ public class ServerSelectFragment extends BaseFragment {
                     android.graphics.Shader.TileMode.CLAMP));
 
             nameTv.setText(server.name);
-            endpointTv.setText(server.host + ":" + server.port);
+            endpointTv.setText(server.useCloudflared
+                    ? server.host + " (Cloudflared)"
+                    : server.host + ":" + server.port);
 
             stopPulse();
             int dotColor;

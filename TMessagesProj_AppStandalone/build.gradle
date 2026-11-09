@@ -71,19 +71,13 @@ android {
     }
 
     buildTypes {
-        // No applicationIdSuffix here (unlike upstream Telegram-Android's
-        // own AppStandalone, which keeps ".web" so its Play and
-        // direct-download builds can coexist as separate installs): this
-        // fork only ever
-        // wants ONE installed app per device, sharing the same
-        // applicationId as :TMessagesProj_App (same keystore too -- see
-        // signingConfigs above), so switching a device from the Play build
-        // to this unrestricted one is a plain in-place update, not a fresh
-        // side-by-side install that starts local chat data over from zero.
+        // Keep the distributable build on APP_PACKAGE so it shares the stable
+        // app identity; the debug APK gets its own id for side-by-side testing.
         debug {
             debuggable true
             jniDebuggable true
             signingConfig signingConfigs.debug
+            applicationIdSuffix ".debug"
             minifyEnabled false
             multiDexEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), '../TMessagesProj/proguard-rules.pro'

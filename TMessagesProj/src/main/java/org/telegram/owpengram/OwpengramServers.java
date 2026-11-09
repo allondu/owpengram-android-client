@@ -378,6 +378,10 @@ public class OwpengramServers {
         if (server.useCloudflared) {
             connectionHost = "127.0.0.1";
             connectionPort = CloudflaredTunnelManager.start(server.host);
+            if (connectionPort == 0) {
+                FileLog.e("Unable to apply Cloudflared server: local tunnel port is unavailable");
+                return;
+            }
         }
         ConnectionsManager.native_applyServerConfig(
                 accountNum,
