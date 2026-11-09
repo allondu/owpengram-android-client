@@ -12,6 +12,7 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
 
@@ -38,12 +39,20 @@ public final class CloudflaredTunnelService extends Service {
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, Thread> workers = new ConcurrentHashMap<>();
+    private final Object networkLock = new Object();
     private volatile boolean stopping;
+    private volatile boolean networkAvailable = true;
+    private volatile long networkGeneration;
+    private Network activeNetwork;
+    private boolean hasSeenNetwork;
+    private ConnectivityManager connectivityManager;
+    private ConnectivityManager.NetworkCallback networkCallback;
 
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
+        registerNetworkCallback();
     }
 
     @Override
@@ -87,12 +96,19 @@ public final class CloudflaredTunnelService extends Service {
         File executable = new File(getApplicationInfo().nativeLibraryDir, "libcloudflared.so");
         if (!executable.isFile()) {
             FileLog.e("Bundled Cloudflared ARM64 executable is missing");
-            workers.remove(key);
+            workers.remove(key, Thread.currentThread());
             return;
         }
 
         File resolverConfig = new File(getCacheDir(), "cloudflared-resolv-" + port + ".conf");
+        int consecutiveFailures = 0;
+        long observedNetworkGeneration = networkGeneration;
         while (!stopping) {
+            if (!awaitNetwork()) {
+                break;
+            }
+            long processStartedAt = SystemClock.elapsedRealtime();
+            Process process = null;
             try {
                 writeResolverConfig(resolverConfig);
                 ProcessBuilder builder = new ProcessBuilder(
@@ -107,7 +123,7 @@ public final class CloudflaredTunnelService extends Service {
                 builder.redirectInput(resolverConfig);
                 builder.redirectErrorStream(true);
 
-                Process process = builder.start();
+                process = builder.start();
                 processes.put(key, process);
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
@@ -119,24 +135,141 @@ public final class CloudflaredTunnelService extends Service {
                 processes.remove(key, process);
                 if (!stopping) {
                     FileLog.e("Cloudflared exited for " + hostname + " with status " + exitCode + "; retrying");
-                    Thread.sleep(3000);
+                    if (observedNetworkGeneration != networkGeneration) {
+                        observedNetworkGeneration = networkGeneration;
+                        consecutiveFailures = 0;
+                        continue;
+                    }
+                    consecutiveFailures = SystemClock.elapsedRealtime() - processStartedAt >= 60000
+                            ? 0
+                            : Math.min(consecutiveFailures + 1, 5);
+                    Thread.sleep(retryDelayMs(consecutiveFailures));
                 }
             } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+                if (stopping) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                observedNetworkGeneration = networkGeneration;
+                consecutiveFailures = 0;
             } catch (Exception e) {
                 FileLog.e("Cloudflared failed for " + hostname, e);
                 if (!stopping) {
                     try {
-                        Thread.sleep(3000);
+                        if (observedNetworkGeneration != networkGeneration) {
+                            observedNetworkGeneration = networkGeneration;
+                            consecutiveFailures = 0;
+                            continue;
+                        }
+                        consecutiveFailures = SystemClock.elapsedRealtime() - processStartedAt >= 60000
+                                ? 0
+                                : Math.min(consecutiveFailures + 1, 5);
+                        Thread.sleep(retryDelayMs(consecutiveFailures));
                     } catch (InterruptedException interrupted) {
-                        Thread.currentThread().interrupt();
-                        break;
+                        if (stopping) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
+                        observedNetworkGeneration = networkGeneration;
+                        consecutiveFailures = 0;
+                    }
+                }
+            } finally {
+                if (process != null) {
+                    processes.remove(key, process);
+                    if (process.isAlive()) {
+                        process.destroy();
                     }
                 }
             }
         }
-        workers.remove(key);
+        workers.remove(key, Thread.currentThread());
+    }
+
+    private static long retryDelayMs(int consecutiveFailures) {
+        return Math.min(3000L << Math.max(0, consecutiveFailures - 1), 60000L);
+    }
+
+    private boolean awaitNetwork() {
+        synchronized (networkLock) {
+            while (!stopping && !networkAvailable) {
+                try {
+                    networkLock.wait();
+                } catch (InterruptedException e) {
+                    if (stopping) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                }
+            }
+            return !stopping;
+        }
+    }
+
+    private void registerNetworkCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return;
+        }
+        connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connectivityManager == null) {
+            FileLog.e("Unable to monitor network changes for Cloudflared");
+            return;
+        }
+        activeNetwork = connectivityManager.getActiveNetwork();
+        networkAvailable = activeNetwork != null;
+        hasSeenNetwork = activeNetwork != null;
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                boolean changed;
+                synchronized (this) {
+                    changed = hasSeenNetwork && (activeNetwork == null || !activeNetwork.equals(network));
+                    activeNetwork = network;
+                    hasSeenNetwork = true;
+                }
+                synchronized (networkLock) {
+                    networkAvailable = true;
+                    networkLock.notifyAll();
+                }
+                if (changed) {
+                    restartTunnelsForNetworkChange();
+                }
+            }
+
+            @Override
+            public void onLost(Network network) {
+                boolean changed;
+                synchronized (this) {
+                    changed = network.equals(activeNetwork);
+                    if (changed) {
+                        activeNetwork = null;
+                    }
+                }
+                if (changed) {
+                    synchronized (networkLock) {
+                        networkAvailable = false;
+                    }
+                    restartTunnelsForNetworkChange();
+                }
+            }
+        };
+        try {
+            connectivityManager.registerDefaultNetworkCallback(networkCallback);
+        } catch (RuntimeException e) {
+            FileLog.e("Unable to register Cloudflared network callback", e);
+            networkCallback = null;
+            networkAvailable = true;
+        }
+    }
+
+    private void restartTunnelsForNetworkChange() {
+        networkGeneration++;
+        for (Process process : processes.values()) {
+            process.destroy();
+        }
+        for (Thread worker : workers.values()) {
+            worker.interrupt();
+        }
     }
 
     private void writeResolverConfig(File destination) throws Exception {
@@ -190,6 +323,14 @@ public final class CloudflaredTunnelService extends Service {
 
     private void stopAll() {
         stopping = true;
+        if (connectivityManager != null && networkCallback != null) {
+            try {
+                connectivityManager.unregisterNetworkCallback(networkCallback);
+            } catch (IllegalArgumentException e) {
+                FileLog.e("Unable to unregister Cloudflared network callback", e);
+            }
+            networkCallback = null;
+        }
         for (Process process : processes.values()) {
             process.destroy();
         }
@@ -197,7 +338,6 @@ public final class CloudflaredTunnelService extends Service {
             worker.interrupt();
         }
         processes.clear();
-        workers.clear();
     }
 
     @Override
