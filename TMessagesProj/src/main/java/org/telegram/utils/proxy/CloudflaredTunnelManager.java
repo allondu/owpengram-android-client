@@ -11,10 +11,14 @@ import org.telegram.messenger.FileLog;
 import java.io.File;
 import java.net.IDN;
 import java.net.ServerSocket;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class CloudflaredTunnelManager {
+    private static final String PREFERENCES_NAME = "cloudflared_tunnels";
+    private static final String PORT_PREFIX = "port:";
     private static final ConcurrentHashMap<String, Integer> localPorts = new ConcurrentHashMap<>();
 
     private CloudflaredTunnelManager() {}
@@ -67,19 +71,15 @@ public final class CloudflaredTunnelManager {
 
         String key = hostname.toLowerCase(Locale.US);
         Integer existingPort = localPorts.get(key);
-        if (existingPort != null) {
-            return existingPort;
-        }
-
         synchronized (localPorts) {
-            existingPort = localPorts.get(key);
-            if (existingPort != null) {
-                return existingPort;
+            if (existingPort == null) {
+                existingPort = getStoredPort(context, key);
             }
-            int localPort = findLocalPort();
-            if (localPort == 0) {
+            int localPort = existingPort != null ? existingPort : findLocalPort();
+            if (localPort <= 0) {
                 return 0;
             }
+            savePort(context, key, localPort);
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
@@ -93,10 +93,40 @@ public final class CloudflaredTunnelManager {
                 localPorts.put(key, localPort);
                 return localPort;
             } catch (RuntimeException e) {
+                if (existingPort == null) {
+                    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                            .edit().remove(PORT_PREFIX + key).apply();
+                }
                 FileLog.e("Failed to start Cloudflared foreground service", e);
                 return 0;
             }
         }
+    }
+
+    static Map<String, Integer> getStoredTunnels(Context context) {
+        Map<String, Integer> tunnels = new HashMap<>();
+        Map<String, ?> stored = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE).getAll();
+        for (Map.Entry<String, ?> entry : stored.entrySet()) {
+            if (!entry.getKey().startsWith(PORT_PREFIX) || !(entry.getValue() instanceof Integer)) {
+                continue;
+            }
+            int port = (Integer) entry.getValue();
+            if (port > 0 && port <= 65535) {
+                tunnels.put(entry.getKey().substring(PORT_PREFIX.length()), port);
+            }
+        }
+        return tunnels;
+    }
+
+    private static Integer getStoredPort(Context context, String hostname) {
+        int port = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .getInt(PORT_PREFIX + hostname, 0);
+        return port > 0 && port <= 65535 ? port : null;
+    }
+
+    private static void savePort(Context context, String hostname, int port) {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+                .edit().putInt(PORT_PREFIX + hostname, port).apply();
     }
 
     public static boolean awaitLocalListener(String hostname, long timeoutMs) {

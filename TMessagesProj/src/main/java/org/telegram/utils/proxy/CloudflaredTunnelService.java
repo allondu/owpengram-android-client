@@ -62,6 +62,10 @@ public final class CloudflaredTunnelService extends Service {
             } else {
                 FileLog.e("Ignoring invalid Cloudflared tunnel service request");
             }
+        } else if (intent == null) {
+            for (Map.Entry<String, Integer> tunnel : CloudflaredTunnelManager.getStoredTunnels(this).entrySet()) {
+                startTunnel(tunnel.getKey(), tunnel.getValue());
+            }
         }
         return START_STICKY;
     }
