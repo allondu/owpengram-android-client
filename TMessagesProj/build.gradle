@@ -114,6 +114,14 @@ android {
     buildToolsVersion '36.0.0'
     ndkVersion "27.2.12479018"
 
+    def cmakeArguments = ['-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-23']
+    def nativeCompilerLauncher = project.findProperty('NATIVE_COMPILER_LAUNCHER')
+    if (nativeCompilerLauncher) {
+        cmakeArguments += [
+                "-DCMAKE_C_COMPILER_LAUNCHER=${nativeCompilerLauncher}",
+                "-DCMAKE_CXX_COMPILER_LAUNCHER=${nativeCompilerLauncher}"
+        ]
+    }
 
     externalNativeBuild {
         cmake {
@@ -145,7 +153,7 @@ android {
         externalNativeBuild {
             cmake {
                 version '3.22.1'
-                arguments '-DANDROID_STL=c++_static', '-DANDROID_PLATFORM=android-23' //, '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
+                arguments cmakeArguments //, '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON'
                 targets 'tmessages.49'
             }
         }

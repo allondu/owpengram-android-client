@@ -113,7 +113,11 @@ jobs:
       - uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: ndk-${{ env.NDK_VERSION }}-${{ matrix.variant }}
+          restore-keys: ndk-${{ env.NDK_VERSION }}-${{ matrix.variant }}
           max-size: 3G
+
+      - name: Reset ccache statistics
+        run: ccache --zero-stats
 
       - name: Resolve release number
         id: version
