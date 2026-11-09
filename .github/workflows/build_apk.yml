@@ -132,14 +132,14 @@ jobs:
 
       # Both build types of :TMessagesProj_AppStandalone sign with
       # TMessagesProj/config/release.keystore, which is gitignored. With the
-      # RELEASE_KEYSTORE_BASE64 secret set (plus RELEASE_STORE_PASSWORD,
+      # KEYSTORE_BASE64 secret set (plus RELEASE_STORE_PASSWORD,
       # RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD) the APK carries the real
       # signature and installs over an existing OwpenGram. Without it -- forks,
       # pull requests -- a throwaway key is generated so the APK still builds,
       # but it cannot update an install signed with the real key.
       - name: Prepare signing key
         env:
-          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
@@ -154,7 +154,7 @@ jobs:
             } >> "$GITHUB_ENV"
             echo "Signing with the release keystore from secrets."
           else
-            echo "::warning::RELEASE_KEYSTORE_BASE64 is not set -- signing with a throwaway key."
+            echo "::warning::KEYSTORE_BASE64 is not set -- signing with a throwaway key."
             keytool -genkeypair -noprompt -keystore "$keystore" -storetype JKS \
               -alias androidkey -storepass android -keypass android \
               -keyalg RSA -keysize 2048 -validity 10000 \
