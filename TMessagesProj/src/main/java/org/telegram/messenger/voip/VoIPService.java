@@ -3395,6 +3395,15 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			timeoutRunnable = null;
 		}
 		try {
+			if (privateCall == null || privateCall.protocol == null
+					|| privateCall.protocol.library_versions == null
+					|| privateCall.protocol.library_versions.isEmpty()
+					|| privateCall.connections == null
+					|| privateCall.connections.isEmpty()) {
+				FileLog.e("Cannot start VoIP call: server returned no protocol version or media endpoints");
+				callFailed();
+				return;
+			}
 			if (BuildVars.LOGS_ENABLED) {
 				FileLog.d("InitCall: keyID=" + keyFingerprint);
 			}
@@ -3456,26 +3465,28 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			final Instance.ServerConfig serverConfig = Instance.getGlobalServerConfig();
 			OwpengramServer selectedServer = OwpengramServers.getServerForAccount(currentAccount);
 			final boolean cloudflaredCall = selectedServer != null && selectedServer.useCloudflared;
+			if (cloudflaredCall && BuildVars.LOGS_ENABLED) {
+				FileLog.d("Cloudflared carries server signaling only; call media uses advertised call endpoints");
+			}
 			final boolean enableAec = !(sysAecAvailable && serverConfig.useSystemAec);
 			final boolean enableNs = !(sysNsAvailable && serverConfig.useSystemNs);
 			final String logFilePath = BuildVars.DEBUG_VERSION ? VoIPHelper.getLogFilePath("voip" + privateCall.id) : VoIPHelper.getLogFilePath("" + privateCall.id, false);
 			final String statsLogFilePath = VoIPHelper.getLogFilePath("" + privateCall.id, true);
-			final Instance.Config config = new Instance.Config(initializationTimeout, receiveTimeout, voipDataSaving, privateCall.p2p_allowed && !cloudflaredCall, enableAec, enableNs, true, false, serverConfig.enableStunMarking, logFilePath, statsLogFilePath, privateCall.protocol.max_layer, privateCall.custom_parameters == null ? "" : privateCall.custom_parameters.data);
+			final Instance.Config config = new Instance.Config(initializationTimeout, receiveTimeout, voipDataSaving, privateCall.p2p_allowed, enableAec, enableNs, true, false, serverConfig.enableStunMarking, logFilePath, statsLogFilePath, privateCall.protocol.max_layer, privateCall.custom_parameters == null ? "" : privateCall.custom_parameters.data);
 			lastLogFilePath = logFilePath;
 
 			// persistent state
 			final String persistentStateFilePath = new File(ApplicationLoader.applicationContext.getCacheDir(), "voip_persistent_state.json").getAbsolutePath();
 
 			// endpoints
-			final boolean forceTcp = cloudflaredCall || preferences.getBoolean("dbg_force_tcp_in_calls", false);
-			final int endpointType = forceTcp ? Instance.ENDPOINT_TYPE_TCP_RELAY : Instance.ENDPOINT_TYPE_UDP_RELAY;
-			if (cloudflaredCall && BuildVars.LOGS_ENABLED) {
-				FileLog.d("Cloudflared call selected: disabling peer UDP and preferring TCP relay endpoints");
-			}
+			final boolean forceTcp = preferences.getBoolean("dbg_force_tcp_in_calls", false);
 			final Instance.Endpoint[] endpoints = new Instance.Endpoint[privateCall.connections.size()];
 			ArrayList<Long> reflectorIds = new ArrayList<>();
 			for (int i = 0; i < endpoints.length; i++) {
 				final TLRPC.PhoneConnection connection = privateCall.connections.get(i);
+				final int endpointType = forceTcp || connection.tcp
+						? Instance.ENDPOINT_TYPE_TCP_RELAY
+						: Instance.ENDPOINT_TYPE_UDP_RELAY;
 				endpoints[i] = new Instance.Endpoint(connection instanceof TLRPC.TL_phoneConnectionWebrtc, connection.id, connection.ip, connection.ipv6, connection.port, endpointType, connection.peer_tag, connection.turn, connection.stun, connection.username, connection.password, connection.tcp);
 				if (connection instanceof TLRPC.TL_phoneConnection) {
 					reflectorIds.add(((TLRPC.TL_phoneConnection) connection).id);

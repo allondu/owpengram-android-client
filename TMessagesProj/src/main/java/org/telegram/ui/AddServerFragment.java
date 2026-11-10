@@ -171,7 +171,7 @@ public class AddServerFragment extends BaseFragment {
         content.addView(section2);
 
         cloudflaredToggle = buildToggleRow(context, "Use Cloudflared",
-                "TCP tunnel via Cloudflare Access; calls need a reachable TCP relay", useCloudflared);
+                "TCP tunnel for server traffic; calls use the call server's own media endpoints", useCloudflared);
         section2.addView(cloudflaredToggle);
         fetchCloudflaredInfoButton = new TextView(context);
         fetchCloudflaredInfoButton.setText("Fetch server info through Cloudflared");
