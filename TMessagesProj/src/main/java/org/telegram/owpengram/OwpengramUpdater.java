@@ -190,15 +190,17 @@ public final class OwpengramUpdater {
     }
 
     /**
-     * Releases carry one APK per CPU architecture, so hand out the one this
-     * device can run, in the order the device itself prefers them. Falls back to
-     * the first attached APK when no asset name carries a known ABI.
+     * Releases carry one APK per CPU architecture plus a universal APK, so hand
+     * out the one this device can run, in the order the device itself prefers
+     * them. Falls back to the universal APK, then to the first attached APK, when
+     * no asset name carries a known ABI.
      */
     private static String apkUrl(JSONArray assets) {
         if (assets == null) {
             return null;
         }
         String firstApk = null;
+        String universalApk = null;
         String bestApk = null;
         int bestRank = Integer.MAX_VALUE;
         for (int i = 0; i < assets.length(); i++) {
@@ -214,6 +216,9 @@ public final class OwpengramUpdater {
             if (firstApk == null) {
                 firstApk = url;
             }
+            if (universalApk == null && name.contains("universal")) {
+                universalApk = url;
+            }
             for (int rank = 0; rank < Build.SUPPORTED_ABIS.length && rank < bestRank; rank++) {
                 if (name.contains(Build.SUPPORTED_ABIS[rank].toLowerCase(Locale.US))) {
                     bestRank = rank;
@@ -222,7 +227,7 @@ public final class OwpengramUpdater {
                 }
             }
         }
-        return bestApk != null ? bestApk : firstApk;
+        return bestApk != null ? bestApk : (universalApk != null ? universalApk : firstApk);
     }
 
     private static String notes(String body) {
