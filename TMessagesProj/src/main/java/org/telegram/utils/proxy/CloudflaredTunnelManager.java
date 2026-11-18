@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Looper;
 import android.text.TextUtils;
 
 import org.telegram.messenger.AndroidUtilities;
@@ -34,6 +35,8 @@ public final class CloudflaredTunnelManager {
     /** Hostnames whose accounts still have to be re-pointed at a recovered tunnel. */
     private static final Set<String> reapplying = ConcurrentHashMap.newKeySet();
     private static volatile boolean lifecycleHooked;
+    /** Activities currently started; the tunnel service may only start while this is above zero. */
+    private static volatile int visibleActivities;
 
     private CloudflaredTunnelManager() {}
 
@@ -73,7 +76,14 @@ public final class CloudflaredTunnelManager {
     }
 
     public static int start(String hostname) {
-        return startTunnel(hostname).port;
+        try {
+            return startTunnel(hostname).port;
+        } catch (Throwable t) {
+            // This is called from ApplicationLoader while restoring accounts: a tunnel
+            // problem must never take the whole launch down with it.
+            FileLog.e("Unable to start the Cloudflared tunnel for " + hostname, t);
+            return 0;
+        }
     }
 
     private static StartResult startTunnel(String hostname) {
@@ -115,6 +125,17 @@ public final class CloudflaredTunnelManager {
             }
             savePort(context, key, localPort);
             localPorts.put(key, localPort);
+            if (visibleActivities == 0) {
+                // Android kills the process when a service started with
+                // startForegroundService() has not called startForeground() within
+                // five seconds. Restoring a stored tunnel from Application.onCreate
+                // does exactly that: the service cannot run until the (slow) cold
+                // start finishes, so the watchdog fires and the app dies on every
+                // launch. Keep the port and let the first visible activity start it.
+                pending.add(key);
+                FileLog.d("Cloudflared tunnel for " + hostname + " is waiting for a visible activity");
+                return new StartResult(localPort, false);
+            }
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
@@ -158,23 +179,19 @@ public final class CloudflaredTunnelManager {
                 return;
             }
             lifecycleHooked = true;
-            AndroidUtilities.runOnUIThread(() -> {
+            Runnable register = () -> {
                 try {
                     ((Application) application).registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-                        private int started;
-
                         @Override
                         public void onActivityStarted(Activity activity) {
-                            started++;
-                            if (started == 1) {
-                                resumePending();
-                            }
+                            visibleActivities++;
+                            resumePending();
                         }
 
                         @Override
                         public void onActivityStopped(Activity activity) {
-                            if (started > 0) {
-                                started--;
+                            if (visibleActivities > 0) {
+                                visibleActivities--;
                             }
                         }
 
@@ -203,7 +220,15 @@ public final class CloudflaredTunnelManager {
                     // Allow a later call to try again instead of disabling the retry path.
                     lifecycleHooked = false;
                 }
-            });
+            };
+            // ApplicationLoader calls this while the main thread is still cold-starting.
+            // Register right there (posting would queue behind that work and miss the
+            // first onActivityStarted), and only post when called off the main thread.
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                register.run();
+            } else {
+                AndroidUtilities.runOnUIThread(register);
+            }
         }
     }
 
