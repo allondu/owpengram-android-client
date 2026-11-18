@@ -63,7 +63,7 @@ public final class CloudflaredTunnelService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
             return handleStartCommand(intent, startId);
-        } catch (RuntimeException e) {
+        } catch (Throwable e) {
             FileLog.e("Cloudflared tunnel service failed to start", e);
             stopSelf(startId);
             return START_NOT_STICKY;
@@ -100,7 +100,10 @@ public final class CloudflaredTunnelService extends Service {
                 startTunnel(tunnel.getKey(), tunnel.getValue());
             }
         }
-        return START_STICKY;
+        // Deliberately not sticky: a tunnel that crashes the process would otherwise be
+        // restarted by the system straight into the same crash. The app restarts its
+        // tunnels from the first visible activity instead.
+        return START_NOT_STICKY;
     }
 
     private void startTunnel(String hostname, int port) {
