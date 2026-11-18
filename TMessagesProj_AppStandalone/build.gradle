@@ -125,7 +125,10 @@ android {
         }
     }
 
-    defaultConfig.versionCode = Integer.parseInt(APP_VERSION_CODE)
+    // The O<N> release number is folded into the Android version code, so every
+    // published release is a strictly newer build than the previous one. Local
+    // builds (OWPENGRAM_BUILD=0) keep the plain APP_VERSION_CODE.
+    defaultConfig.versionCode = Integer.parseInt(APP_VERSION_CODE) + Integer.parseInt(OWPENGRAM_BUILD.toString())
 
     applicationVariants.all { variant ->
         variant.outputs.all { output ->

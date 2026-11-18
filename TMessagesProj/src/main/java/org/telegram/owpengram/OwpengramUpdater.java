@@ -2,6 +2,7 @@ package org.telegram.owpengram;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Build;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -17,6 +18,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,7 +37,6 @@ import java.util.regex.Pattern;
  */
 public final class OwpengramUpdater {
 
-    private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/owpengram/owpengram-android-client/releases/latest";
     private static final long CHECK_INTERVAL_MS = 12L * 60 * 60 * 1000;
     private static final long PROMPT_INTERVAL_MS = 24L * 60 * 60 * 1000;
     private static final int MAX_RESPONSE_BYTES = 512 * 1024;
@@ -59,6 +60,12 @@ public final class OwpengramUpdater {
 
     private OwpengramUpdater() {
     }
+
+    /**
+     * The repo the APKs are published to: the release workflow in this repo
+     * creates an O<N> release per build, so this is the repo to ask.
+     */
+    private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/allondu/owpengram-android-client/releases/latest";
 
     /** Only the direct-download build updates itself this way; store builds leave it to the store. */
     public static boolean enabled() {
@@ -163,15 +170,7 @@ public final class OwpengramUpdater {
             return null;
         }
 
-        String url = null;
-        final JSONArray assets = release.optJSONArray("assets");
-        for (int i = 0; assets != null && i < assets.length(); i++) {
-            final JSONObject asset = assets.optJSONObject(i);
-            if (asset != null && asset.optString("name", "").toLowerCase().endsWith(".apk")) {
-                url = asset.optString("browser_download_url", null);
-                break;
-            }
-        }
+        String url = apkUrl(release.optJSONArray("assets"));
         if (url == null || url.isEmpty()) {
             // no APK attached yet: send the person to the release page instead
             url = release.optString("html_url", null);
@@ -188,6 +187,42 @@ public final class OwpengramUpdater {
         update.url = url;
         update.flags |= 4; // url
         return update;
+    }
+
+    /**
+     * Releases carry one APK per CPU architecture, so hand out the one this
+     * device can run, in the order the device itself prefers them. Falls back to
+     * the first attached APK when no asset name carries a known ABI.
+     */
+    private static String apkUrl(JSONArray assets) {
+        if (assets == null) {
+            return null;
+        }
+        String firstApk = null;
+        String bestApk = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (int i = 0; i < assets.length(); i++) {
+            final JSONObject asset = assets.optJSONObject(i);
+            if (asset == null) {
+                continue;
+            }
+            final String name = asset.optString("name", "").toLowerCase(Locale.US);
+            final String url = asset.optString("browser_download_url", "");
+            if (!name.endsWith(".apk") || !url.startsWith("https://")) {
+                continue;
+            }
+            if (firstApk == null) {
+                firstApk = url;
+            }
+            for (int rank = 0; rank < Build.SUPPORTED_ABIS.length && rank < bestRank; rank++) {
+                if (name.contains(Build.SUPPORTED_ABIS[rank].toLowerCase(Locale.US))) {
+                    bestRank = rank;
+                    bestApk = url;
+                    break;
+                }
+            }
+        }
+        return bestApk != null ? bestApk : firstApk;
     }
 
     private static String notes(String body) {
