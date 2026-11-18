@@ -11,6 +11,9 @@ import android.text.TextUtils;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.UserConfig;
+import org.telegram.owpengram.OwpengramServer;
+import org.telegram.owpengram.OwpengramServers;
 
 import java.io.File;
 import java.net.IDN;
@@ -28,9 +31,21 @@ public final class CloudflaredTunnelManager {
     private static final ConcurrentHashMap<String, Integer> localPorts = new ConcurrentHashMap<>();
     /** Hostnames whose tunnel could not be started yet; retried once the app is visible. */
     private static final Set<String> pending = ConcurrentHashMap.newKeySet();
+    /** Hostnames whose accounts still have to be re-pointed at a recovered tunnel. */
+    private static final Set<String> reapplying = ConcurrentHashMap.newKeySet();
     private static volatile boolean lifecycleHooked;
 
     private CloudflaredTunnelManager() {}
+
+    private static final class StartResult {
+        final int port;
+        final boolean started;
+
+        StartResult(int port, boolean started) {
+            this.port = port;
+            this.started = started;
+        }
+    }
 
     public static boolean isValidHostname(String hostname) {
         if (TextUtils.isEmpty(hostname) || hostname.length() > 253
@@ -58,30 +73,34 @@ public final class CloudflaredTunnelManager {
     }
 
     public static int start(String hostname) {
+        return startTunnel(hostname).port;
+    }
+
+    private static StartResult startTunnel(String hostname) {
         if (!isValidHostname(hostname)) {
             FileLog.e("Cloudflared tunnel hostname is invalid");
-            return 0;
+            return new StartResult(0, false);
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             FileLog.e("Cloudflared tunnels require Android 8.0 or later");
-            return 0;
+            return new StartResult(0, false);
         }
         if (!isArm64Supported()) {
             FileLog.e("Cloudflared tunnels are currently available on ARM64 devices only");
-            return 0;
+            return new StartResult(0, false);
         }
 
         Context context = ApplicationLoader.applicationContext;
         if (context == null) {
             FileLog.e("Cloudflared tunnel requested before the application context was ready");
-            return 0;
+            return new StartResult(0, false);
         }
         ensureLifecycleHook(context);
 
         File executable = new File(context.getApplicationInfo().nativeLibraryDir, "libcloudflared.so");
         if (!executable.isFile()) {
             FileLog.e("Cloudflared tunnel support is not packaged in this build");
-            return 0;
+            return new StartResult(0, false);
         }
 
         String key = hostname.toLowerCase(Locale.US);
@@ -92,7 +111,7 @@ public final class CloudflaredTunnelManager {
             }
             int localPort = existingPort != null ? existingPort : findLocalPort();
             if (localPort <= 0) {
-                return 0;
+                return new StartResult(0, false);
             }
             savePort(context, key, localPort);
             localPorts.put(key, localPort);
@@ -100,13 +119,14 @@ public final class CloudflaredTunnelManager {
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
                     .putExtra(CloudflaredTunnelService.EXTRA_PORT, localPort);
+            boolean started = false;
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     context.startForegroundService(intent);
                 } else {
                     context.startService(intent);
                 }
-                pending.remove(key);
+                started = true;
             } catch (RuntimeException e) {
                 // Android 12+ refuses to start a foreground service while the app
                 // has no visible activity, e.g. from Application.onCreate. Keep the
@@ -115,7 +135,12 @@ public final class CloudflaredTunnelManager {
                 pending.add(key);
                 FileLog.e("Cloudflared foreground service is not allowed to start yet", e);
             }
-            return localPort;
+            if (started && pending.remove(key)) {
+                // The account was pointed at this port while the tunnel was down.
+                // Once the listener is really up, re-apply its server config.
+                scheduleReapply(hostname, key, localPort);
+            }
+            return new StartResult(localPort, started);
         }
     }
 
@@ -175,6 +200,8 @@ public final class CloudflaredTunnelManager {
                     });
                 } catch (RuntimeException e) {
                     FileLog.e("Unable to track app visibility for Cloudflared", e);
+                    // Allow a later call to try again instead of disabling the retry path.
+                    lifecycleHooked = false;
                 }
             });
         }
@@ -185,8 +212,59 @@ public final class CloudflaredTunnelManager {
             return;
         }
         for (String hostname : new ArrayList<>(pending)) {
-            if (start(hostname) > 0) {
-                pending.remove(hostname);
+            if (!startTunnel(hostname).started) {
+                // Still blocked (for example the app went background again); keep it queued.
+                pending.add(hostname);
+            }
+        }
+    }
+
+    /** Waits for the recovered listener, then re-applies every account that uses this host. */
+    private static void scheduleReapply(final String hostname, String key, final int port) {
+        if (!reapplying.add(key)) {
+            return;
+        }
+        Thread worker = new Thread(() -> {
+            try {
+                if (awaitListener(port, 20000)) {
+                    AndroidUtilities.runOnUIThread(() -> reapplyAccounts(hostname));
+                }
+            } finally {
+                reapplying.remove(key);
+            }
+        }, "CloudflaredReapply");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private static boolean awaitListener(int port, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 250);
+                return true;
+            } catch (Exception ignored) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static void reapplyAccounts(String hostname) {
+        for (int accountNum = 0; accountNum < UserConfig.MAX_ACCOUNT_COUNT; accountNum++) {
+            try {
+                OwpengramServer server = OwpengramServers.getServerForAccount(accountNum);
+                if (server != null && server.useCloudflared && server.host != null
+                        && server.host.equalsIgnoreCase(hostname)) {
+                    OwpengramServers.applyStoredServerToAccount(accountNum);
+                }
+            } catch (RuntimeException e) {
+                FileLog.e("Unable to re-apply the server config for account " + accountNum, e);
             }
         }
     }
@@ -222,21 +300,7 @@ public final class CloudflaredTunnelManager {
         if (port == 0) {
             return false;
         }
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (System.currentTimeMillis() < deadline) {
-            try (java.net.Socket socket = new java.net.Socket()) {
-                socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 250);
-                return true;
-            } catch (Exception ignored) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-            }
-        }
-        return false;
+        return awaitListener(port, timeoutMs);
     }
 
     public static int getLocalPort(String hostname) {
