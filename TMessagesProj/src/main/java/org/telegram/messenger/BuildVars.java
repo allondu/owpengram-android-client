@@ -14,6 +14,12 @@ import android.os.Build;
 
 import com.android.billingclient.api.ProductDetails;
 
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
 import java.util.Objects;
 
 public class BuildVars {
@@ -41,7 +47,7 @@ public class BuildVars {
     // OwpenGram has no FCM push infra — keep MTProto alive in background via foreground service.
     public static boolean FORCE_BACKGROUND_WORK = true;
 
-    // You can use this flag to disable Google Play Billing (If you're making fork and want it to be in Google Play)
+    // You can use this flag to disable Google Play Billing (If you're making fork and want to be in Google Play)
     public static boolean IS_BILLING_UNAVAILABLE = false;
 
     // works only on official app ids, disable on your forks
@@ -51,15 +57,49 @@ public class BuildVars {
         if (ApplicationLoader.applicationContext != null) {
             SharedPreferences sharedPreferences = ApplicationLoader.applicationContext.getSharedPreferences("systemConfig", Context.MODE_PRIVATE);
             LOGS_ENABLED = DEBUG_VERSION || sharedPreferences.getBoolean("logsEnabled", DEBUG_VERSION);
-            if (LOGS_ENABLED) {
-                final Thread.UncaughtExceptionHandler pastHandler = Thread.getDefaultUncaughtExceptionHandler();
-                Thread.setDefaultUncaughtExceptionHandler((thread, exception) -> {
+            final Thread.UncaughtExceptionHandler pastHandler = Thread.getDefaultUncaughtExceptionHandler();
+            Thread.setDefaultUncaughtExceptionHandler((thread, exception) -> {
+                if (LOGS_ENABLED) {
                     FileLog.fatal(exception, false);
-                    if (pastHandler != null) {
-                        pastHandler.uncaughtException(thread, exception);
-                    }
-                });
+                }
+                dumpCrashToFile(thread, exception);
+                if (pastHandler != null) {
+                    pastHandler.uncaughtException(thread, exception);
+                }
+            });
+        }
+    }
+
+    /**
+     * Release builds run with logging disabled, so a crash used to leave no usable trace.
+     * Always write the last crash to the app's external files dir, which can be read
+     * without root: Android/data/messanger.ee.owpengram/files/crash-last.txt
+     */
+    private static void dumpCrashToFile(Thread thread, Throwable exception) {
+        try {
+            File dir = ApplicationLoader.applicationContext.getExternalFilesDir(null);
+            if (dir == null) {
+                dir = ApplicationLoader.applicationContext.getFilesDir();
             }
+            if (dir == null) {
+                return;
+            }
+            StringWriter buffer = new StringWriter();
+            PrintWriter writer = new PrintWriter(buffer);
+            writer.println("thread: " + (thread != null ? thread.getName() : "unknown"));
+            writer.println("time: " + new Date());
+            writer.println("build: " + BUILD_VERSION_STRING + " (O" + OWPENGRAM_BUILD + ")");
+            writer.println("device: " + Build.MANUFACTURER + " " + Build.MODEL
+                    + ", Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
+            writer.println();
+            exception.printStackTrace(writer);
+            writer.flush();
+            try (FileOutputStream output = new FileOutputStream(new File(dir, "crash-last.txt"), false)) {
+                output.write(buffer.toString().getBytes(StandardCharsets.UTF_8));
+                output.getFD().sync();
+            }
+        } catch (Throwable ignored) {
+            // Never let crash reporting crash the crash handler.
         }
     }
 
