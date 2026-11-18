@@ -30,6 +30,8 @@ env:
   CMAKE_VERSION: 3.22.1
   BUILD_TOOLS_VERSION: 36.0.0
   PLATFORM_VERSION: android-36
+  # Where the hosted runner keeps the Android SDK; the toolchain cache needs it.
+  ANDROID_SDK_PATH: /usr/local/lib/android/sdk
 
 jobs:
   # The release number is baked into the APK (BuildVars.OWPENGRAM_BUILD) and the
@@ -148,6 +150,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # The image ships no NDK (the disk-space step above removes it) and
+      # downloading NDK plus CMake costs several minutes on every build. Gradle's
+      # and ccache's caches only cover build outputs, not installed SDK packages,
+      # so keep the toolchain here; setup-android then finds it already installed.
+      - name: Cache Android NDK and CMake
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_PATH }}/ndk/${{ env.NDK_VERSION }}
+            ${{ env.ANDROID_SDK_PATH }}/cmake/${{ env.CMAKE_VERSION }}
+          key: android-toolchain-${{ runner.os }}-ndk-${{ env.NDK_VERSION }}-cmake-${{ env.CMAKE_VERSION }}
+
       - uses: android-actions/setup-android@v3
         with:
           packages: >-
@@ -219,7 +233,8 @@ jobs:
             :TMessagesProj_AppStandalone:assembleAfat$task
           ccache --show-stats
 
-      # ABI-specific APKs avoid shipping native libraries for other architectures.
+      # ABI splits keep each APK from shipping native libraries for other
+      # architectures; the universal APK is the fallback for anything else.
       - name: Collect APKs
         id: apk
         run: |
@@ -276,8 +291,8 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # One APK per CPU architecture, named so the updater can hand the device
-      # the build it can actually run.
+      # One APK per CPU architecture plus the universal APK, named so the
+      # updater can hand each device the build it can actually run.
       - name: Name APKs
         env:
           TAG: O${{ needs.version.outputs.number }}
