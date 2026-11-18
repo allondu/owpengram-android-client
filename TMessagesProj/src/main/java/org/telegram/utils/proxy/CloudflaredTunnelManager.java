@@ -1,25 +1,34 @@
 package org.telegram.utils.proxy;
 
+import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Bundle;
 import android.text.TextUtils;
 
+import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 
 import java.io.File;
 import java.net.IDN;
 import java.net.ServerSocket;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class CloudflaredTunnelManager {
     private static final String PREFERENCES_NAME = "cloudflared_tunnels";
     private static final String PORT_PREFIX = "port:";
     private static final ConcurrentHashMap<String, Integer> localPorts = new ConcurrentHashMap<>();
+    /** Hostnames whose tunnel could not be started yet; retried once the app is visible. */
+    private static final Set<String> pending = ConcurrentHashMap.newKeySet();
+    private static volatile boolean lifecycleHooked;
 
     private CloudflaredTunnelManager() {}
 
@@ -63,6 +72,12 @@ public final class CloudflaredTunnelManager {
         }
 
         Context context = ApplicationLoader.applicationContext;
+        if (context == null) {
+            FileLog.e("Cloudflared tunnel requested before the application context was ready");
+            return 0;
+        }
+        ensureLifecycleHook(context);
+
         File executable = new File(context.getApplicationInfo().nativeLibraryDir, "libcloudflared.so");
         if (!executable.isFile()) {
             FileLog.e("Cloudflared tunnel support is not packaged in this build");
@@ -70,8 +85,8 @@ public final class CloudflaredTunnelManager {
         }
 
         String key = hostname.toLowerCase(Locale.US);
-        Integer existingPort = localPorts.get(key);
         synchronized (localPorts) {
+            Integer existingPort = localPorts.get(key);
             if (existingPort == null) {
                 existingPort = getStoredPort(context, key);
             }
@@ -80,6 +95,7 @@ public final class CloudflaredTunnelManager {
                 return 0;
             }
             savePort(context, key, localPort);
+            localPorts.put(key, localPort);
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
@@ -90,15 +106,87 @@ public final class CloudflaredTunnelManager {
                 } else {
                     context.startService(intent);
                 }
-                localPorts.put(key, localPort);
-                return localPort;
+                pending.remove(key);
             } catch (RuntimeException e) {
-                if (existingPort == null) {
-                    context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-                            .edit().remove(PORT_PREFIX + key).apply();
+                // Android 12+ refuses to start a foreground service while the app
+                // has no visible activity, e.g. from Application.onCreate. Keep the
+                // port and retry once an activity is visible: returning 0 here used
+                // to leave the account configured for no server at all.
+                pending.add(key);
+                FileLog.e("Cloudflared foreground service is not allowed to start yet", e);
+            }
+            return localPort;
+        }
+    }
+
+    /** Tunnels that lost the foreground-service race start as soon as the app is visible again. */
+    private static void ensureLifecycleHook(Context context) {
+        if (lifecycleHooked) {
+            return;
+        }
+        synchronized (CloudflaredTunnelManager.class) {
+            if (lifecycleHooked) {
+                return;
+            }
+            Context application = context.getApplicationContext();
+            if (!(application instanceof Application)) {
+                return;
+            }
+            lifecycleHooked = true;
+            AndroidUtilities.runOnUIThread(() -> {
+                try {
+                    ((Application) application).registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+                        private int started;
+
+                        @Override
+                        public void onActivityStarted(Activity activity) {
+                            started++;
+                            if (started == 1) {
+                                resumePending();
+                            }
+                        }
+
+                        @Override
+                        public void onActivityStopped(Activity activity) {
+                            if (started > 0) {
+                                started--;
+                            }
+                        }
+
+                        @Override
+                        public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+                        }
+
+                        @Override
+                        public void onActivityResumed(Activity activity) {
+                        }
+
+                        @Override
+                        public void onActivityPaused(Activity activity) {
+                        }
+
+                        @Override
+                        public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+                        }
+
+                        @Override
+                        public void onActivityDestroyed(Activity activity) {
+                        }
+                    });
+                } catch (RuntimeException e) {
+                    FileLog.e("Unable to track app visibility for Cloudflared", e);
                 }
-                FileLog.e("Failed to start Cloudflared foreground service", e);
-                return 0;
+            });
+        }
+    }
+
+    private static void resumePending() {
+        if (pending.isEmpty()) {
+            return;
+        }
+        for (String hostname : new ArrayList<>(pending)) {
+            if (start(hostname) > 0) {
+                pending.remove(hostname);
             }
         }
     }

@@ -51,18 +51,42 @@ public final class CloudflaredTunnelService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        createNotificationChannel();
-        registerNetworkCallback();
+        try {
+            createNotificationChannel();
+            registerNetworkCallback();
+        } catch (RuntimeException e) {
+            FileLog.e("Unable to prepare the Cloudflared tunnel service", e);
+        }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        try {
+            return handleStartCommand(intent, startId);
+        } catch (RuntimeException e) {
+            FileLog.e("Cloudflared tunnel service failed to start", e);
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+    }
+
+    private int handleStartCommand(Intent intent, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             stopAll();
             stopSelf(startId);
             return START_NOT_STICKY;
         }
-        startForeground(NOTIFICATION_ID, createNotification());
+        try {
+            startForeground(NOTIFICATION_ID, createNotification());
+        } catch (RuntimeException e) {
+            // Android 12+ refuses a foreground service started from the background,
+            // which is exactly what a sticky restart looks like. Letting this escape
+            // killed the process, and the next sticky restart killed it again -- the
+            // crash loop seen after a call or while adding an account.
+            FileLog.e("Cloudflared tunnel cannot run in the foreground right now", e);
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         if (intent != null && ACTION_START.equals(intent.getAction())) {
             String hostname = intent.getStringExtra(EXTRA_HOSTNAME);
             int port = intent.getIntExtra(EXTRA_PORT, 0);
@@ -262,6 +286,7 @@ public final class CloudflaredTunnelService extends Service {
         }
     }
 
+
     private void restartTunnelsForNetworkChange() {
         networkGeneration++;
         for (Process process : processes.values()) {
@@ -342,7 +367,11 @@ public final class CloudflaredTunnelService extends Service {
 
     @Override
     public void onDestroy() {
-        stopAll();
+        try {
+            stopAll();
+        } catch (RuntimeException e) {
+            FileLog.e("Unable to stop Cloudflared tunnels cleanly", e);
+        }
         super.onDestroy();
     }
 
