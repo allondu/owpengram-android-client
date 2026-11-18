@@ -13,12 +13,14 @@ on:
         options: [both, debug, stable]
         default: both
       owpengram_build:
-        description: 'Release number (the N in tag ON); 0 = local/dev build without self-update'
-        default: '0'
+        description: 'Release number (the N in tag ON); leave empty for the next free number, 0 for a local/dev build with no release'
+        default: ''
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Pull request runs replace each other; a run that publishes a release is
+  # never cancelled half-way, because that APK is what the in-app updater offers.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -30,8 +32,62 @@ env:
   PLATFORM_VERSION: android-36
 
 jobs:
+  # The release number is baked into the APK (BuildVars.OWPENGRAM_BUILD) and the
+  # updater compares it with the newest O<N> release, so it has to be decided
+  # before anything is built. Every push to main publishes the next free number.
+  version:
+    name: Release number
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.resolve.outputs.number }}
+      release: ${{ steps.resolve.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+          lfs: false
+
+      - name: Resolve release number
+        id: resolve
+        env:
+          INPUT_BUILD: ${{ github.event.inputs.owpengram_build }}
+          INPUT_BUILD_TYPE: ${{ github.event.inputs.build_type }}
+        run: |
+          number=0
+          release=false
+          if [[ "$GITHUB_REF" == refs/tags/O* ]]; then
+            number="${GITHUB_REF#refs/tags/O}"
+            release=true
+          elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # nothing is published from a pull request
+            number=0
+          elif [[ -n "$INPUT_BUILD" ]]; then
+            number="$INPUT_BUILD"
+            if [[ "$number" != 0 ]]; then release=true; fi
+          else
+            # one past the highest O<N> tag that already exists
+            latest="$(git ls-remote --tags --refs origin 'refs/tags/O*' \
+              | sed -n 's#.*refs/tags/[Oo]\([0-9][0-9]*\)$#\1#p' \
+              | sort -n | tail -1)"
+            number="$(( ${latest:-0} + 1 ))"
+            release=true
+          fi
+          if ! [[ "$number" =~ ^[0-9]+$ ]]; then
+            echo "::error::OWPENGRAM_BUILD must be a whole number, got '$number'"
+            exit 1
+          fi
+          # a debug-only manual run builds an APK that is never published
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$INPUT_BUILD_TYPE" == debug ]]; then
+            release=false
+          fi
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "Release number O$number, publish: $release"
+
   apk:
     name: Standalone APK (${{ matrix.variant }})
+    needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -119,21 +175,6 @@ jobs:
       - name: Reset ccache statistics
         run: ccache --zero-stats
 
-      - name: Resolve release number
-        id: version
-        env:
-          INPUT_BUILD: ${{ github.event.inputs.owpengram_build }}
-        run: |
-          number="${INPUT_BUILD:-0}"
-          if [[ "$GITHUB_REF" == refs/tags/O* ]]; then
-            number="${GITHUB_REF#refs/tags/O}"
-          fi
-          if ! [[ "$number" =~ ^[0-9]+$ ]]; then
-            echo "::error::OWPENGRAM_BUILD must be a whole number, got '$number'"
-            exit 1
-          fi
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-
       # Both build types of :TMessagesProj_AppStandalone sign with
       # TMessagesProj/config/release.keystore, which is gitignored. With the
       # KEYSTORE_BASE64 secret set (plus RELEASE_STORE_PASSWORD,
@@ -171,7 +212,7 @@ jobs:
           echo "APK_DIR=TMessagesProj_AppStandalone/build/outputs/apk/afat/$dir" >> "$GITHUB_ENV"
           ./gradlew --no-daemon --stacktrace --build-cache \
             -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g" \
-            -POWPENGRAM_BUILD=${{ steps.version.outputs.number }} \
+            -POWPENGRAM_BUILD=${{ needs.version.outputs.number }} \
             -POWPENGRAM_PUBLIC_HOST="${{ vars.OWPENGRAM_PUBLIC_HOST }}" \
             -POWPENGRAM_APP_LINKS_VERIFIED="${{ vars.OWPENGRAM_APP_LINKS_VERIFIED }}" \
             -PNATIVE_COMPILER_LAUNCHER=ccache \
@@ -182,7 +223,7 @@ jobs:
       - name: Collect APKs
         id: apk
         run: |
-          base="owpengram-${{ matrix.variant }}-O${{ steps.version.outputs.number }}-${GITHUB_SHA::7}"
+          base="owpengram-${{ matrix.variant }}-O${{ needs.version.outputs.number }}-${GITHUB_SHA::7}"
           mkdir -p dist
           mapfile -t apks < <(find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' -print | sort)
           if [ "${#apks[@]}" -eq 0 ]; then
@@ -204,3 +245,71 @@ jobs:
           retention-days: 14
           # APKs are zip files already.
           compression-level: 0
+
+  # Publishes the stable APKs as the O<number> release the in-app updater looks
+  # for. The tag is created here, so nobody has to remember to push one.
+  release:
+    name: Publish O${{ needs.version.outputs.number }}
+    needs: [version, apk]
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      # An APK signed with the throwaway key cannot install over an existing
+      # OwpenGram, so publishing it would give the updater a download that always
+      # fails. The build job still falls back to the throwaway key for forks and
+      # pull requests; a release needs the real keystore.
+      - name: Check signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 is not set: the APK is signed with a throwaway key and cannot update an installed OwpenGram. Add the release keystore secret before publishing."
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: owpengram-stable-*
+          path: dist
+          merge-multiple: true
+
+      # One APK per CPU architecture, named so the updater can hand the device
+      # the build it can actually run.
+      - name: Name APKs
+        env:
+          TAG: O${{ needs.version.outputs.number }}
+        run: |
+          cd dist
+          shopt -s nullglob
+          apks=(*.apk)
+          if [ "${#apks[@]}" -eq 0 ]; then
+            echo "::error::No stable APK was downloaded"
+            exit 1
+          fi
+          for apk in "${apks[@]}"; do
+            abi=universal
+            for candidate in arm64-v8a armeabi-v7a x86_64 x86; do
+              if [[ "$apk" == *"$candidate"* ]]; then abi="$candidate"; break; fi
+            done
+            mv "$apk" "owpengram-$TAG-$abi.apk"
+          done
+          ls -l
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: O${{ needs.version.outputs.number }}
+        run: |
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # a re-run for a number that is already published: replace the APKs
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" dist/*.apk --clobber
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" dist/*.apk \
+              --target "$GITHUB_SHA" \
+              --title "OwpenGram $TAG" \
+              --generate-notes \
+              --latest
+          fi
