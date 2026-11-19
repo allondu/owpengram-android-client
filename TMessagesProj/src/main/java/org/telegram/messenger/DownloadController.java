@@ -258,9 +258,10 @@ public class DownloadController extends BaseController implements NotificationCe
     public DownloadController(int instance) {
         super(instance);
         SharedPreferences preferences = MessagesController.getMainSettings(currentAccount);
-        String defaultLow = "1_1_1_1_1048576_512000_512000_524288_0_0_1_1_50_0";
-        String defaultMedium = "13_13_13_13_1048576_10485760_1048576_524288_1_1_1_0_100_1";
-        String defaultHigh = "13_13_13_13_1048576_15728640_3145728_524288_1_1_1_0_100_1";
+        // Privacy default: nothing is downloaded until the user taps it.
+        String defaultLow = "0_0_0_0_1048576_512000_512000_524288_0_0_0_1_50_0";
+        String defaultMedium = "0_0_0_0_1048576_10485760_1048576_524288_0_0_0_0_100_0";
+        String defaultHigh = "0_0_0_0_1048576_15728640_3145728_524288_0_0_0_0_100_0";
         lowPreset = new Preset(preferences.getString("preset0", defaultLow), defaultLow);
         lowPreset.preloadStories = false;
         mediumPreset = new Preset(preferences.getString("preset1", defaultMedium), defaultMedium);
@@ -287,9 +288,9 @@ public class DownloadController extends BaseController implements NotificationCe
             for (int a = 0; a < 4; a++) {
                 String key = "mobileDataDownloadMask" + (a == 0 ? "" : a);
                 if (a == 0 || preferences.contains(key)) {
-                    mobileDataDownloadMask[a] = preferences.getInt(key, AUTODOWNLOAD_TYPE_PHOTO | AUTODOWNLOAD_TYPE_VIDEO | AUTODOWNLOAD_TYPE_DOCUMENT);
-                    wifiDownloadMask[a] = preferences.getInt("wifiDownloadMask" + (a == 0 ? "" : a), AUTODOWNLOAD_TYPE_PHOTO | AUTODOWNLOAD_TYPE_VIDEO | AUTODOWNLOAD_TYPE_DOCUMENT);
-                    roamingDownloadMask[a] = preferences.getInt("roamingDownloadMask" + (a == 0 ? "" : a), AUTODOWNLOAD_TYPE_PHOTO);
+                    mobileDataDownloadMask[a] = preferences.getInt(key, 0);
+                    wifiDownloadMask[a] = preferences.getInt("wifiDownloadMask" + (a == 0 ? "" : a), 0);
+                    roamingDownloadMask[a] = preferences.getInt("roamingDownloadMask" + (a == 0 ? "" : a), 0);
                 } else {
                     mobileDataDownloadMask[a] = mobileDataDownloadMask[0];
                     wifiDownloadMask[a] = wifiDownloadMask[0];
@@ -304,7 +305,7 @@ public class DownloadController extends BaseController implements NotificationCe
             roamingMaxFileSize[2] = preferences.getLong("roamingMaxDownloadSize" + 2, lowPreset.sizes[PRESET_SIZE_NUM_VIDEO]);
             roamingMaxFileSize[3] = preferences.getLong("roamingMaxDownloadSize" + 3, lowPreset.sizes[PRESET_SIZE_NUM_DOCUMENT]);
 
-            boolean globalAutodownloadEnabled = preferences.getBoolean("globalAutodownloadEnabled", true);
+            boolean globalAutodownloadEnabled = preferences.getBoolean("globalAutodownloadEnabled", false);
             mobilePreset = new Preset(mobileDataDownloadMask, mediumPreset.sizes[PRESET_SIZE_NUM_PHOTO], mobileMaxFileSize[2], mobileMaxFileSize[3], true, true, globalAutodownloadEnabled, false, 100, false);
             wifiPreset = new Preset(wifiDownloadMask, highPreset.sizes[PRESET_SIZE_NUM_PHOTO], wifiMaxFileSize[2], wifiMaxFileSize[3], true, true, globalAutodownloadEnabled, false, 100, true);
             roamingPreset = new Preset(roamingDownloadMask, lowPreset.sizes[PRESET_SIZE_NUM_PHOTO], roamingMaxFileSize[2], roamingMaxFileSize[3], false, false, globalAutodownloadEnabled, true, 50, true);
@@ -317,6 +318,29 @@ public class DownloadController extends BaseController implements NotificationCe
             editor.putInt("currentMobilePreset", currentMobilePreset = 3);
             editor.putInt("currentWifiPreset", currentWifiPreset = 3);
             editor.putInt("currentRoamingPreset", currentRoamingPreset = 3);
+            editor.commit();
+        }
+
+        // One-time migration for installs that already saved the old auto-download
+        // defaults. The user can still enable downloads manually afterwards.
+        if (!preferences.getBoolean("owpengramNoAutoDownloadV1", false)) {
+            for (Preset preset : new Preset[]{lowPreset, mediumPreset, highPreset, mobilePreset, wifiPreset, roamingPreset}) {
+                for (int a = 0; a < preset.mask.length; a++) {
+                    preset.mask[a] = 0;
+                }
+                preset.enabled = false;
+                preset.preloadVideo = false;
+                preset.preloadMusic = false;
+                preset.preloadStories = false;
+            }
+            SharedPreferences.Editor editor = preferences.edit();
+            editor.putString("preset0", lowPreset.toString());
+            editor.putString("preset1", mediumPreset.toString());
+            editor.putString("preset2", highPreset.toString());
+            editor.putString("mobilePreset", mobilePreset.toString());
+            editor.putString("wifiPreset", wifiPreset.toString());
+            editor.putString("roamingPreset", roamingPreset.toString());
+            editor.putBoolean("owpengramNoAutoDownloadV1", true);
             editor.commit();
         }
 
@@ -349,6 +373,12 @@ public class DownloadController extends BaseController implements NotificationCe
     }
 
     public void loadAutoDownloadConfig(boolean force) {
+        // Do not let the server profile silently re-enable automatic downloads.
+        // The privacy build starts with every preset off; the user can still
+        // turn downloads on manually in Data and Storage settings.
+        if (MessagesController.getMainSettings(currentAccount).getBoolean("owpengramNoAutoDownloadV1", false)) {
+            return;
+        }
         if (loadingAutoDownloadConfig || !force && Math.abs(System.currentTimeMillis() - getUserConfig().autoDownloadConfigLoadTime) < 24 * 60 * 60 * 1000) {
             return;
         }

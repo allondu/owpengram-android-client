@@ -742,6 +742,13 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         items.add(SettingCell.Factory.of(10, IconBackgroundColors.PURPLE.top, IconBackgroundColors.PURPLE.bottom, R.drawable.settings_language, getString(R.string.SettingsLanguage), LocaleController.getCurrentLanguageName()));
 
         items.add(UItem.asShadow(null));
+        // Keep the private-client controls directly below the main settings
+        // grid. They used to live below Premium/Stars and were easy to miss.
+        items.add(UItem.asHeader(getString(R.string.PrivacyIdentity)));
+        items.add(SettingCell.Factory.of(40, 0xFF55CA47, 0xFF27B434, R.drawable.settings_privacy, getString(R.string.SecretChatsOnly), getString(R.string.SecretChatsOnlyInfo), SharedConfig.isSecretChatsOnly() ? "On" : "Off"));
+        items.add(SettingCell.Factory.of(41, 0xFFF45255, 0xFFDF3955, R.drawable.settings_power, getString(R.string.PanicWipe), getString(R.string.PanicWipeInfo)));
+        items.add(SettingCell.Factory.of(42, 0xFF1BA4ED, 0xFF1488E1, R.drawable.settings_account, getString(R.string.AppIdentity), getString(R.string.AppIdentityInfo), SharedConfig.getAppDisplayName()));
+        items.add(UItem.asShadow(null));
         if (!walletAbove && getMessagesController().config.walletAvailable.get()) {
             final GramWallet wallet = GramWallet.getInstance(currentAccount);
             items.add(SettingCell.Factory.of(25, 0, 0, Theme.isCurrentThemeDark() ? R.drawable.settings_wallet_dark : R.drawable.settings_wallet, TextCell.applyNewSpanTimed(getString(R.string.WalletAttachMoney), 1790679020), null, wallet.getBalance() > 0 ? GramWallet.formatGrams(wallet.getBalance()) : null));
@@ -775,12 +782,6 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         }
         if (items.get(items.size() - 1).viewType != UniversalAdapter.VIEW_TYPE_SHADOW)
             items.add(UItem.asShadow(null));
-
-        items.add(UItem.asHeader(getString(R.string.PrivacyIdentity)));
-        items.add(SettingCell.Factory.of(40, 0xFF55CA47, 0xFF27B434, R.drawable.settings_privacy, getString(R.string.SecretChatsOnly), getString(R.string.SecretChatsOnlyInfo), SharedConfig.isSecretChatsOnly() ? "On" : "Off"));
-        items.add(SettingCell.Factory.of(41, 0xFFF45255, 0xFFDF3955, R.drawable.settings_data, getString(R.string.PanicWipe), getString(R.string.PanicWipeInfo)));
-        items.add(SettingCell.Factory.of(42, 0xFF1BA4ED, 0xFF1488E1, R.drawable.settings_account, getString(R.string.AppIdentity), getString(R.string.AppIdentityInfo), SharedConfig.getAppDisplayName()));
-        items.add(UItem.asShadow(null));
 
         items.add(UItem.asHeader(getString(R.string.SettingsHelp)));
         // Ask a Question / Telegram FAQ / Telegram Features / Privacy Policy are
@@ -1063,7 +1064,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 toggleSecretChatsOnly();
                 break;
             case 41:
-                Toast.makeText(getParentActivity(), getString(R.string.PanicWipeToast), Toast.LENGTH_LONG).show();
+                presentFragment(new PanicModeActivity());
                 break;
             case 42:
                 showAppIdentityDialog();

@@ -371,41 +371,48 @@ public class ApplicationLoader extends Application {
     });
 
     private static final String BACKGROUND_MIGRATION_KEY = "owpengramBackgroundV1";
+    private static final String BACKGROUND_OFF_MIGRATION_KEY = "owpengramBackgroundOffV1";
 
     public static boolean isPushServiceEnabled() {
         SharedPreferences preferences = MessagesController.getGlobalNotificationsSettings();
         if (preferences.contains("pushService")) {
-            return preferences.getBoolean("pushService", true);
+            return preferences.getBoolean("pushService", false);
         }
-        return MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", BuildVars.FORCE_BACKGROUND_WORK);
+        return MessagesController.getMainSettings(UserConfig.selectedAccount).getBoolean("keepAliveService", false);
     }
 
     public static void ensureBackgroundWorkEnabled() {
-        if (!BuildVars.FORCE_BACKGROUND_WORK) {
+        SharedPreferences global = MessagesController.getGlobalNotificationsSettings();
+        if (global.getBoolean(BACKGROUND_OFF_MIGRATION_KEY, false)) {
             return;
         }
-        SharedPreferences global = MessagesController.getGlobalNotificationsSettings();
-        if (!global.getBoolean(BACKGROUND_MIGRATION_KEY, false)) {
-            global.edit()
-                    .putBoolean("pushService", true)
-                    .putBoolean("pushConnection", true)
-                    .putBoolean(BACKGROUND_MIGRATION_KEY, true)
-                    .apply();
-            for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
-                if (!UserConfig.getInstance(a).isClientActivated()) {
-                    continue;
-                }
-                SharedPreferences main = MessagesController.getMainSettings(a);
-                main.edit()
-                        .putBoolean("keepAliveService", true)
-                        .putBoolean("backgroundConnection", true)
-                        .apply();
-                MessagesController messagesController = MessagesController.getInstance(a);
-                messagesController.keepAliveService = true;
-                messagesController.backgroundConnection = true;
-                ConnectionsManager.getInstance(a).setPushConnectionEnabled(true);
+        // This build is privacy-first: no persistent background connection and no
+        // keep-alive service until the user explicitly enables them.
+        global.edit()
+                .putBoolean("pushService", false)
+                .putBoolean("pushConnection", false)
+                .putBoolean(BACKGROUND_MIGRATION_KEY, true)
+                .putBoolean(BACKGROUND_OFF_MIGRATION_KEY, true)
+                .apply();
+        for (int a = 0; a < UserConfig.MAX_ACCOUNT_COUNT; a++) {
+            if (!UserConfig.getInstance(a).isClientActivated()) {
+                continue;
             }
+            SharedPreferences main = MessagesController.getMainSettings(a);
+            main.edit()
+                    .putBoolean("keepAliveService", false)
+                    .putBoolean("backgroundConnection", false)
+                    .apply();
+            MessagesController messagesController = MessagesController.getInstance(a);
+            messagesController.keepAliveService = false;
+            messagesController.backgroundConnection = false;
+            ConnectionsManager.getInstance(a).setPushConnectionEnabled(false);
+            // Notifications should alert once for an unread message, never repeat.
+            MessagesController.getNotificationsSettings(a).edit().putInt("repeat_messages", 0).putBoolean("owpengramNoRepeatV1", true).apply();
         }
+        try {
+            applicationContext.stopService(new Intent(applicationContext, NotificationsService.class));
+        } catch (Throwable ignore) {}
     }
 
     public static void startPushService() {

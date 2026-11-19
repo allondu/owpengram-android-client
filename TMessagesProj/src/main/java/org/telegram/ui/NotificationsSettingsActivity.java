@@ -1169,7 +1169,7 @@ public class NotificationsSettingsActivity extends BaseFragment implements Notif
                         }
                         updateVibrate = false;
                     } else if (position == repeatRow) {
-                        int minutes = preferences.getInt("repeat_messages", 60);
+                        int minutes = preferences.getInt("repeat_messages", 0);
                         String value;
                         if (minutes == 0) {
                             value = getString("RepeatNotificationsNever", R.string.RepeatNotificationsNever);

@@ -2599,6 +2599,24 @@ public class PeerStoriesView extends SizeNotifierFrameLayout implements Notifica
 
 
 
+    private ReactionsLayoutInBubble.VisibleReaction getConfiguredStoryReaction() {
+        String configured = MediaDataController.getInstance(currentAccount).getStoryReaction();
+        if (configured != null && configured.startsWith("animated_")) {
+            try {
+                long documentId = Long.parseLong(configured.substring(9));
+                return ReactionsLayoutInBubble.VisibleReaction.fromCustomEmoji(documentId);
+            } catch (Exception ignore) {}
+        }
+        if (configured != null) {
+            TLRPC.TL_availableReaction reaction = MediaDataController.getInstance(currentAccount).getReactionsMap().get(configured);
+            if (reaction != null) {
+                return ReactionsLayoutInBubble.VisibleReaction.fromEmojicon(reaction);
+            }
+        }
+        TLRPC.TL_availableReaction fallback = MediaDataController.getInstance(currentAccount).getReactionsMap().get("\u2764");
+        return fallback != null ? ReactionsLayoutInBubble.VisibleReaction.fromEmojicon(fallback) : null;
+    }
+
     private void likeStory(ReactionsLayoutInBubble.VisibleReaction visibleReaction) {
         if (currentStory.storyItem == null) {
             return;
@@ -2607,17 +2625,21 @@ public class PeerStoriesView extends SizeNotifierFrameLayout implements Notifica
         TLRPC.Reaction oldReaction = currentStory.storyItem.sent_reaction;
         if (currentStory.storyItem.sent_reaction == null || visibleReaction != null) {
             if (visibleReaction == null) {
-                TLRPC.TL_availableReaction reaction = MediaDataController.getInstance(currentAccount).getReactionsMap().get("\u2764");
-                if (reaction != null) {
-                    drawAnimatedEmojiAsMovingReaction = false;
-                    TLRPC.Document document = reaction.around_animation;
-                    String filer = ReactionsEffectOverlay.getFilterForAroundAnimation();
-                    reactionEffectImageReceiver.setImage(ImageLocation.getForDocument(document), filer, null, null, null, 0);
-                    if (reactionEffectImageReceiver.getLottieAnimation() != null) {
-                        reactionEffectImageReceiver.getLottieAnimation().setCurrentFrame(0, false, true);
+                ReactionsLayoutInBubble.VisibleReaction likeReaction = getConfiguredStoryReaction();
+                if (likeReaction != null) {
+                    if (likeReaction.emojicon != null) {
+                        TLRPC.TL_availableReaction reaction = MediaDataController.getInstance(currentAccount).getReactionsMap().get(likeReaction.emojicon);
+                        if (reaction != null) {
+                            drawAnimatedEmojiAsMovingReaction = false;
+                            TLRPC.Document document = reaction.around_animation;
+                            String filer = ReactionsEffectOverlay.getFilterForAroundAnimation();
+                            reactionEffectImageReceiver.setImage(ImageLocation.getForDocument(document), filer, null, null, null, 0);
+                            if (reactionEffectImageReceiver.getLottieAnimation() != null) {
+                                reactionEffectImageReceiver.getLottieAnimation().setCurrentFrame(0, false, true);
+                            }
+                            drawReactionEffect = true;
+                        }
                     }
-                    drawReactionEffect = true;
-                    ReactionsLayoutInBubble.VisibleReaction likeReaction = ReactionsLayoutInBubble.VisibleReaction.fromEmojicon(reaction);
                     storiesController.setStoryReaction(dialogId, currentStory.storyItem, likeReaction);
                 }
             } else {

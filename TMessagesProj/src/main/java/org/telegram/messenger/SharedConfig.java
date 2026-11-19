@@ -1064,7 +1064,7 @@ public class SharedConfig {
         if (ApplicationLoader.applicationContext != null) {
             return ApplicationLoader.applicationContext.getString(R.string.AppName);
         }
-        return "encRgraM";
+        return "flag";
     }
 
     public static void setAppDisplayName(String name) {

@@ -3324,7 +3324,7 @@ public class NotificationsController extends BaseController implements Notificat
             intent.putExtra("currentAccount", currentAccount);
             PendingIntent pintent = PendingIntent.getService(ApplicationLoader.applicationContext, 0, intent, PendingIntent.FLAG_MUTABLE);
             SharedPreferences preferences = getAccountInstance().getNotificationsSettings();
-            int minutes = preferences.getInt("repeat_messages", 60);
+            int minutes = preferences.getInt("repeat_messages", 0);
             if (minutes > 0 && personalCount > 0) {
                 alarmManager.set(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + minutes * 60 * 1000, pintent);
             } else {

@@ -264,6 +264,7 @@ public class MediaDataController extends BaseController {
     private List<TLRPC.TL_availableReaction> enabledReactionsList = new ArrayList<>();
     private HashMap<String, TLRPC.TL_availableReaction> reactionsMap = new HashMap<>();
     private String doubleTapReaction;
+    private String storyReaction;
     private boolean isLoadingReactions;
     private int reactionsUpdateDate;
     private boolean reactionsCacheGenerated;
@@ -8766,6 +8767,27 @@ public class MediaDataController extends BaseController {
     public void setDoubleTapReaction(String reaction) {
         MessagesController.getEmojiSettings(currentAccount).edit().putString("reaction_on_double_tap", reaction).apply();
         doubleTapReaction = reaction;
+    }
+
+    public String getStoryReaction() {
+        if (storyReaction != null) {
+            return storyReaction;
+        }
+        String savedReaction = MessagesController.getEmojiSettings(currentAccount).getString("story_reaction", null);
+        if (savedReaction != null && (savedReaction.startsWith("animated_") || getReactionsMap().get(savedReaction) != null)) {
+            storyReaction = savedReaction;
+            return storyReaction;
+        }
+        storyReaction = "\u2764";
+        return storyReaction;
+    }
+
+    public void setStoryReaction(String reaction) {
+        if (reaction == null) {
+            reaction = "\u2764";
+        }
+        MessagesController.getEmojiSettings(currentAccount).edit().putString("story_reaction", reaction).apply();
+        storyReaction = reaction;
     }
 
     public List<TLRPC.TL_availableReaction> getEnabledReactionsList() {

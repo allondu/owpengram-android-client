@@ -1613,8 +1613,8 @@ public class MessagesController extends BaseController implements NotificationCe
         canRevokePmInbox = mainPreferences.getBoolean("canRevokePmInbox", canRevokePmInbox);
         preloadFeaturedStickers = mainPreferences.getBoolean("preloadFeaturedStickers", false);
         youtubePipType = mainPreferences.getString("youtubePipType", "disabled");
-        keepAliveService = mainPreferences.getBoolean("keepAliveService", BuildVars.FORCE_BACKGROUND_WORK);
-        backgroundConnection = mainPreferences.getBoolean("backgroundConnection", BuildVars.FORCE_BACKGROUND_WORK);
+        keepAliveService = mainPreferences.getBoolean("keepAliveService", false);
+        backgroundConnection = mainPreferences.getBoolean("backgroundConnection", false);
         promoDialogId = mainPreferences.getLong("proxy_dialog", 0);
         nextPromoInfoCheckTime = mainPreferences.getInt("nextPromoInfoCheckTime", 0);
         promoDialogType = mainPreferences.getInt("promo_dialog_type", 0);
@@ -3017,28 +3017,11 @@ public class MessagesController extends BaseController implements NotificationCe
                     }
                     break;
                 }
-                case "background_connection": {
-                    if (value.value instanceof TLRPC.TL_jsonBool) {
-                        TLRPC.TL_jsonBool bool = (TLRPC.TL_jsonBool) value.value;
-                        if (bool.value != backgroundConnection) {
-                            backgroundConnection = bool.value;
-                            editor.putBoolean("backgroundConnection", backgroundConnection);
-                            changed = true;
-                            keelAliveChanged = true;
-                        }
-                    }
-                    break;
-                }
+                case "background_connection":
                 case "keep_alive_service": {
-                    if (value.value instanceof TLRPC.TL_jsonBool) {
-                        TLRPC.TL_jsonBool bool = (TLRPC.TL_jsonBool) value.value;
-                        if (bool.value != keepAliveService) {
-                            keepAliveService = bool.value;
-                            editor.putBoolean("keepAliveService", keepAliveService);
-                            changed = true;
-                            keelAliveChanged = true;
-                        }
-                    }
+                    // Privacy build: the server may not silently switch the
+                    // persistent background connection or keep-alive service on.
+                    // The user controls both in Notification settings.
                     break;
                 }
                 case "qr_login_camera": {

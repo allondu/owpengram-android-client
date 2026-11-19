@@ -140,6 +140,7 @@ public class StickersActivity extends BaseFragment implements NotificationCenter
     @Keep
     private int largeEmojiRow;
     private int reactionsDoubleTapRow;
+    private int storyReactionRow;
     private int stickersBotInfo;
     @Keep
     private int featuredRow;
@@ -327,6 +328,7 @@ public class StickersActivity extends BaseFragment implements NotificationCenter
     private static final int ID_DYNAMIC_PACK_ORDER = 7;
     private static final int ID_SHOW_MORE_FEATURED = 8;
     private static final int ID_SUGGEST_EMOJI = 9;
+    private static final int ID_STORY_REACTION = 10;
 
     private void fillItems(ArrayList<UItem> items, UniversalAdapter adapter) {
         MediaDataController mediaDataController = MediaDataController.getInstance(currentAccount);
@@ -384,6 +386,8 @@ public class StickersActivity extends BaseFragment implements NotificationCenter
         if (currentType == TYPE_IMAGE) {
             reactionsDoubleTapRow = items.size();
             items.add(UItem.asSettingsCell(ID_QUICK_REACTION, R.drawable.msg2_reactions2, getString(R.string.DoubleTapSetting)).onBind(this::setQuickReactionImage));
+            storyReactionRow = items.size();
+            items.add(UItem.asSettingsCell(ID_STORY_REACTION, R.drawable.msg2_reactions2, getString(R.string.StoryReactionSetting)).onBind(this::setStoryReactionImage));
             items.add(UItem.asShadow(addStickersBotSpan(getString(currentType == TYPE_EMOJIPACKS ? R.string.EmojiBotInfo : R.string.StickersBotInfo))));
 
             items.add(UItem.asHeader(getString(R.string.StickersSettings)));
@@ -501,6 +505,9 @@ public class StickersActivity extends BaseFragment implements NotificationCenter
                 break;
             case ID_QUICK_REACTION:
                 presentFragment(new ReactionsDoubleTapManageActivity());
+                break;
+            case ID_STORY_REACTION:
+                presentFragment(new ReactionsDoubleTapManageActivity(true));
                 break;
             case ID_DYNAMIC_PACK_ORDER:
                 SharedConfig.toggleUpdateStickersOrderOnSend();
@@ -735,9 +742,16 @@ public class StickersActivity extends BaseFragment implements NotificationCenter
     }
 
     private void setQuickReactionImage(View view) {
+        setReactionImage(view, MediaDataController.getInstance(currentAccount).getDoubleTapReaction());
+    }
+
+    private void setStoryReactionImage(View view) {
+        setReactionImage(view, MediaDataController.getInstance(currentAccount).getStoryReaction());
+    }
+
+    private void setReactionImage(View view, String reaction) {
         if (view instanceof TextSettingsCell) {
             final TextSettingsCell cell = (TextSettingsCell) view;
-            final String reaction = MediaDataController.getInstance(currentAccount).getDoubleTapReaction();
             if (reaction != null) {
                 if (reaction.startsWith("animated_")) {
                     try {
