@@ -6804,6 +6804,16 @@ public class MessagesController extends BaseController implements NotificationCe
         return encryptedChats.get(id);
     }
 
+    public TLRPC.EncryptedChat getEncryptedChatForUser(long userId) {
+        TLRPC.EncryptedChat result = null;
+        for (TLRPC.EncryptedChat chat : encryptedChats.values()) {
+            if (chat.user_id == userId && !(chat instanceof TLRPC.TL_encryptedChatDiscarded) && (result == null || chat.id > result.id)) {
+                result = chat;
+            }
+        }
+        return result;
+    }
+
     public TLRPC.EncryptedChat getEncryptedChatDB(int chatId, boolean created) {
         TLRPC.EncryptedChat chat = encryptedChats.get(chatId);
         if (chat == null || created && (chat instanceof TLRPC.TL_encryptedChatWaiting || chat instanceof TLRPC.TL_encryptedChatRequested)) {

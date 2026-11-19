@@ -2716,6 +2716,36 @@ public class ChatActivity extends BaseFragment implements
 
     @Override
     public boolean onFragmentCreate() {
+        if (SharedConfig.isSecretChatsOnly()) {
+            final long requestedChatId = arguments.getLong("chat_id", 0);
+            final long requestedUserId = arguments.getLong("user_id", 0);
+            final int requestedEncId = arguments.getInt("enc_id", 0);
+            final int requestedMode = arguments.getInt("chatMode", 0);
+            if (requestedEncId == 0 && requestedMode == 0) {
+                if (requestedChatId != 0) {
+                    LaunchActivity.showSecretChatOnlyBlocked();
+                    return false;
+                }
+                if (requestedUserId != 0) {
+                    final TLRPC.User requestedUser = getMessagesController().getUser(requestedUserId);
+                    if (requestedUser == null || requestedUser.bot || UserObject.isUserSelf(requestedUser)) {
+                        LaunchActivity.showSecretChatOnlyBlocked();
+                        return false;
+                    }
+                    final TLRPC.EncryptedChat secretChat = getMessagesController().getEncryptedChatForUser(requestedUserId);
+                    if (secretChat != null) {
+                        arguments.putInt("enc_id", secretChat.id);
+                        arguments.remove("user_id");
+                    } else {
+                        LaunchActivity launchActivity = LaunchActivity.instance;
+                        if (launchActivity != null) {
+                            launchActivity.requestSecretChat(requestedUserId);
+                        }
+                        return false;
+                    }
+                }
+            }
+        }
         final long chatId = arguments.getLong("chat_id", 0);
         final long userId = arguments.getLong("user_id", 0);
         final int encId = arguments.getInt("enc_id", 0);

@@ -1,7 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="AppName">OwpenGram</string>
-    <string name="AppNameBeta">OwpenGram Beta</string>
+    <string name="AppName">encRgraM</string>
+    <string name="AppNameBeta">encRgraM Beta</string>
+    <string name="SecretChatsOnly">Secret Chat Only</string>
+    <string name="SecretChatsOnlyInfo">Every chat opens as a secret chat. Normal chats, groups and bots are deactivated.</string>
+    <string name="SecretChatsOnlyWarningTitle">Enable Secret Chat Only?</string>
+    <string name="SecretChatsOnlyWarning">This is a demo privacy mode. Normal chats, groups and bots will be deactivated, and only secret chats can be opened. The backend notification for people who try to message you is documented but is not active in this build.</string>
+    <string name="SecretChatOnlyBlocked">Secret Chat Only is active. Normal chats, groups and bots are deactivated, so only secret chats can be opened.</string>
+    <string name="PanicWipe">Panic Wipe</string>
+    <string name="PanicWipeInfo">Demo placeholder: this button deliberately does nothing.</string>
+    <string name="PanicWipeToast">Panic Wipe is a demo button. Nothing was deleted.</string>
+    <string name="PrivacyIdentity">Privacy &amp; identity</string>
+    <string name="AppIdentity">App identity</string>
+    <string name="AppIdentityInfo">Change the app name and launcher logo.</string>
+    <string name="AppIdentitySaved">App identity saved.</string>
+    <string name="AppNameLabel">App name</string>
+    <string name="AppNameHint">Leave empty to use encRgraM</string>
+    <string name="AppLogoLabel">Launcher logo</string>
     <string name="LanguageName">English</string>
     <string name="English">English</string>
     <string name="LanguageNameInEnglish">English</string>
@@ -5818,10 +5833,10 @@
     <string name="BioLimitTitle">Bio</string>
     <string name="BioLimitSubtitle">Add more symbols and use links in your bio.</string>
     <string name="AppIcon">App Icon</string>
-    <string name="AppIconDefault">Default</string>
-    <string name="AppIconVintage">Vintage</string>
-    <string name="AppIconAqua">Aqua</string>
-    <string name="AppIconPremium">Premium</string>
+    <string name="AppIconDefault">Light</string>
+    <string name="AppIconVintage">Dark</string>
+    <string name="AppIconAqua">Triad</string>
+    <string name="AppIconPremium">Triad Dark</string>
     <string name="AppIconTurbo">Turbo</string>
     <string name="AppIconNox">Nox</string>
     <string name="AppIconChangedTo">App icon has been changed to %1$s</string>

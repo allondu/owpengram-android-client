@@ -42,7 +42,15 @@ public class PremiumAppIconsPreviewView extends FrameLayout implements PagerHead
         }
 
         if (icons.size() < 3) {
-            FileLog.e(new IllegalArgumentException("There should be at least 3 premium icons!"));
+            icons.clear();
+            for (LauncherIconController.LauncherIcon icon : LauncherIconController.LauncherIcon.values()) {
+                icons.add(icon);
+                if (icons.size() == 3) {
+                    break;
+                }
+            }
+        }
+        if (icons.size() < 3) {
             isEmpty = true;
             return;
         }
