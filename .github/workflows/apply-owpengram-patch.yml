@@ -2,10 +2,6 @@ name: Apply OwpenGram media patch
 
 on:
   workflow_dispatch:
-    inputs:
-      patch_b64:
-        description: 'gzip and base64 encoded source patch'
-        required: true
 
 permissions:
   contents: write
@@ -21,10 +17,8 @@ jobs:
           fetch-depth: 1
 
       - name: Apply the media patch
-        env:
-          PATCH_B64: ${{ github.event.inputs.patch_b64 }}
         run: |
-          printf '%s' "$PATCH_B64" | base64 -d | gunzip > owpengram.patch
+          base64 -d owpengram.patch.b64 | gunzip > owpengram.patch
           git apply --whitespace=nowarn owpengram.patch
           rm owpengram.patch
           grep -n "isVideoFileDocument" TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
@@ -34,7 +28,7 @@ jobs:
         run: |
           git config user.name "Meralchen"
           git config user.email "67538314+Meralchen@users.noreply.github.com"
-          git rm .github/workflows/apply-owpengram-patch.yml
+          git rm .github/workflows/apply-owpengram-patch.yml owpengram.patch.b64
           git add -A TMessagesProj/src/main
           git commit -m "feat: play video files in the app and keep downloads out of the gallery
 
