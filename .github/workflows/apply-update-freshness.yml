@@ -1,0 +1,72 @@
+name: Apply update freshness fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Patch, stage and push
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramUpdater.java")
+          s = path.read_text()
+
+          def replace(old, new):
+              global s
+              if old not in s:
+                  raise SystemExit("missing snippet: " + old[:80])
+              s = s.replace(old, new, 1)
+
+          replace(
+              '    private static final String KEY_LAST_CHECK = "last_check";\n',
+              '    private static final String KEY_BUILD = "build";\n'
+              '    private static final String KEY_LAST_CHECK = "last_check";\n'
+          )
+          replace(
+              '    private static boolean checking;\n'
+              '    private static boolean periodicScheduled;\n',
+              '    private static boolean checking;\n'
+              '    private static boolean periodicScheduled;\n'
+              '    private static boolean firstCheckInProcess = true;\n'
+          )
+          replace(
+              '        final SharedPreferences prefs = ApplicationLoader.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);\n'
+              '        final long now = System.currentTimeMillis();\n'
+              '        if (!force && Math.abs(now - prefs.getLong(KEY_LAST_CHECK, 0)) < CHECK_INTERVAL_MS) {',
+              '        final SharedPreferences prefs = ApplicationLoader.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);\n'
+              '        if (prefs.getInt(KEY_BUILD, 0) != BuildVars.OWPENGRAM_BUILD) {\n'
+              '            // A freshly installed or just updated build asks GitHub once right away;\n'
+              '            // the previous build\'s check time must not hide the release it was upgraded to.\n'
+              '            prefs.edit().putInt(KEY_BUILD, BuildVars.OWPENGRAM_BUILD).remove(KEY_LAST_CHECK).apply();\n'
+              '        }\n'
+              '        final long now = System.currentTimeMillis();\n'
+              '        final boolean skipThrottle;\n'
+              '        synchronized (OwpengramUpdater.class) {\n'
+              '            skipThrottle = firstCheckInProcess;\n'
+              '            firstCheckInProcess = false;\n'
+              '        }\n'
+              '        if (!force && !skipThrottle && Math.abs(now - prefs.getLong(KEY_LAST_CHECK, 0)) < CHECK_INTERVAL_MS) {'
+          )
+
+          path.write_text(s)
+          PY
+          grep -n -E "KEY_BUILD|firstCheckInProcess|skipThrottle" TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramUpdater.java
+          git add TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramUpdater.java
+          git config user.name "Meralchen"
+          git config user.email "67538314+Meralchen@users.noreply.github.com"
+          git rm .github/workflows/apply-update-freshness.yml
+          git commit -m "fix: check for updates on every fresh app start"
+          git push origin HEAD:main
