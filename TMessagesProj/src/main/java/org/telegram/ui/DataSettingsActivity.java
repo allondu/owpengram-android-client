@@ -308,7 +308,7 @@ public class DataSettingsActivity extends BaseFragment {
                 SharedConfig.hideMediaFromGallery = !SharedConfig.hideMediaFromGallery;
                 SharedConfig.saveConfig();
                 ((TextCheckCell) view).setChecked(SharedConfig.hideMediaFromGallery);
-                ImageLoader.getInstance(currentAccount).checkMediaPaths();
+                ImageLoader.getInstance().checkMediaPaths();
             } else if (position == saveToGalleryGroupsRow || position == saveToGalleryChannelsRow || position == saveToGalleryPeerRow) {
                 int flag;
                 if (position == saveToGalleryGroupsRow) {

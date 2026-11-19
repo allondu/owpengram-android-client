@@ -2496,6 +2496,13 @@ public class ImageLoader {
                 telegramPath.mkdirs();
                 if (SharedConfig.hideMediaFromGallery) {
                     AndroidUtilities.createEmptyFile(new File(telegramPath, ".nomedia"));
+                    try {
+                        File legacyPath = new File(Environment.getExternalStorageDirectory(), "OwpenGram");
+                        if (legacyPath.isDirectory() && !legacyPath.getAbsolutePath().equals(telegramPath.getAbsolutePath())) {
+                            AndroidUtilities.createEmptyFile(new File(legacyPath, ".nomedia"));
+                        }
+                    } catch (Exception ignore) {
+                    }
                 }
 
                 if (!telegramPath.isDirectory()) {
