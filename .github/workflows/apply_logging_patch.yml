@@ -1,0 +1,32 @@
+name: Apply OwpenGram logging patch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply patch and push
+        run: |
+          set -euo pipefail
+          git apply owpengram-logging.patch
+          git config user.name Meralchen
+          git config user.email 67538314+Meralchen@users.noreply.github.com
+          git add \
+            TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java \
+            TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java \
+            TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java \
+            TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java \
+            TMessagesProj/src/main/res/values/owpengram_logs.xml
+          git commit -m "feat: let the user turn off and clear diagnostic logs" \
+            -m "Add a Logging row to Settings so log writes can be stopped without the hidden debug menu, and delete the stored log files to reclaim storage. The explicit preference now also wins over the debug build's default so logging stays off after a restart."
+          git rm owpengram-logging.patch .github/workflows/apply_logging_patch.yml
+          git commit -m "[skip ci] chore: remove the one-off logging patch"
+          git push origin HEAD:main
