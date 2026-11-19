@@ -1,0 +1,33 @@
+name: Apply strings fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply patch and commit
+        run: |
+          git config user.name "Meralchen"
+          git config user.email "67538314+Meralchen@users.noreply.github.com"
+          git apply --index owpengram-strings-fix.patch
+          mkdir -p TMessagesProj_AppStandalone/src/main/res/raw
+          cat > TMessagesProj_AppStandalone/src/main/res/raw/owpengram_keep.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <!-- This fork still reads many strings with getString(R.string...), so keep
+               every string resource even when resource shrinking is enabled. -->
+          <resources xmlns:tools="http://schemas.android.com/tools"
+              tools:keep="@string/*" />
+          EOF
+          git add TMessagesProj_AppStandalone/src/main/res/raw/owpengram_keep.xml
+          git rm .github/workflows/apply-strings-fix.yml owpengram-strings-fix.patch
+          git commit -m "fix: do not discard string resources referenced by code"
+          git push origin HEAD:main
