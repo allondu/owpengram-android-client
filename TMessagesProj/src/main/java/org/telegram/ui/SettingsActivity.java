@@ -789,6 +789,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         }
         items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, "OwpenGram"));
         items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_devices, getString(R.string.CheckForUpdates)));
+        boolean loggingEnabled = org.telegram.owpengram.OwpengramLogs.isEnabled();
+        items.add(SettingCell.Factory.of(32, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_data, getString(R.string.OwpengramLogging), getString(R.string.OwpengramLoggingSubtitle), getString(loggingEnabled ? R.string.OwpengramLoggingOn : R.string.OwpengramLoggingOff)));
 
         if (SharedSettings.experimentalSettingsAllowed.get()) {
             items.add(UItem.asShadow(null));
@@ -930,6 +932,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 }
                 break;
             }
+            case 32:
+                showLoggingDialog();
+                break;
 
             case 20:
                 ProfileActivity.sendLogs(getParentActivity(), false);
@@ -957,6 +962,37 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 break;
             }
         }
+    }
+
+    private void showLoggingDialog() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        final boolean enabled = org.telegram.owpengram.OwpengramLogs.isEnabled();
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
+        builder.setTitle(getString(R.string.OwpengramLoggingTitle));
+        builder.setMessage(getString(enabled ? R.string.OwpengramLoggingMessageOn : R.string.OwpengramLoggingMessageOff));
+        builder.setPositiveButton(getString(enabled ? R.string.OwpengramLoggingTurnOff : R.string.OwpengramLoggingTurnOn), (dialog, which) -> {
+            org.telegram.owpengram.OwpengramLogs.setEnabled(!enabled);
+            if (listView != null && listView.adapter != null) {
+                listView.adapter.update(true);
+            }
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(!enabled ? R.string.OwpengramLoggingTurnedOn : R.string.OwpengramLoggingTurnedOff)).show();
+        });
+        builder.setNeutralButton(getString(R.string.OwpengramLoggingDelete), (dialog, which) -> org.telegram.owpengram.OwpengramLogs.deleteLogs(deleted -> {
+            if (getParentActivity() == null) {
+                return;
+            }
+            if (listView != null && listView.adapter != null) {
+                listView.adapter.update(true);
+            }
+            CharSequence text = deleted > 0
+                ? formatString(R.string.OwpengramLoggingDeletedSize, AndroidUtilities.formatFileSize(deleted))
+                : getString(R.string.OwpengramLoggingNothingToDelete);
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.ic_delete, text).show();
+        }));
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        showDialog(builder.create());
     }
 
     private String serverLabel(int account) {

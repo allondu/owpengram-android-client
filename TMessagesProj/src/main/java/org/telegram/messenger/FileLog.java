@@ -616,8 +616,52 @@ public class FileLog {
         }
     }
 
+    /**
+     * Stops writing to the current log files and drops the file logger. A
+     * later log call starts fresh files, so this is safe to use both when
+     * logging is turned off and before stored logs are deleted.
+     */
+    public static void closeLogFiles() {
+        FileLog logger;
+        synchronized (FileLog.class) {
+            logger = Instance;
+            Instance = null;
+        }
+        if (logger == null) {
+            return;
+        }
+        if (logger.logQueue != null) {
+            logger.logQueue.postRunnable(logger::closeWriters);
+        } else {
+            logger.closeWriters();
+        }
+    }
+
+    private void closeWriters() {
+        try {
+            if (streamWriter != null) {
+                streamWriter.flush();
+                streamWriter.close();
+            }
+        } catch (Throwable ignore) {
+        } finally {
+            streamWriter = null;
+        }
+        try {
+            if (tlStreamWriter != null) {
+                tlStreamWriter.flush();
+                tlStreamWriter.close();
+            }
+        } catch (Throwable ignore) {
+        } finally {
+            tlStreamWriter = null;
+        }
+    }
+
     public static void cleanupLogs() {
-        ensureInitied();
+        if (BuildVars.LOGS_ENABLED) {
+            ensureInitied();
+        }
         File dir = AndroidUtilities.getLogsDir();
         if (dir == null) {
             return;

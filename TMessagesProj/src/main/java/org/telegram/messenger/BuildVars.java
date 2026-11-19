@@ -56,7 +56,9 @@ public class BuildVars {
     static {
         if (ApplicationLoader.applicationContext != null) {
             SharedPreferences sharedPreferences = ApplicationLoader.applicationContext.getSharedPreferences("systemConfig", Context.MODE_PRIVATE);
-            LOGS_ENABLED = DEBUG_VERSION || sharedPreferences.getBoolean("logsEnabled", DEBUG_VERSION);
+            // Debug builds log by default, but the explicit preference must win so
+            // the user can turn logging off and keep it off across restarts.
+            LOGS_ENABLED = sharedPreferences.getBoolean("logsEnabled", DEBUG_VERSION);
         }
         // The handler must be installed even when this class happens to be loaded before
         // ApplicationLoader.onCreate() has stored the context: the old version skipped

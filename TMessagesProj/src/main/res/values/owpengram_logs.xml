@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="OwpengramLogging">Logging</string>
+    <string name="OwpengramLoggingSubtitle">Diagnostic logs — tap to change or delete</string>
+    <string name="OwpengramLoggingOn">On</string>
+    <string name="OwpengramLoggingOff">Off</string>
+    <string name="OwpengramLoggingTitle">Diagnostic logs</string>
+    <string name="OwpengramLoggingMessageOn">Logging is on. OwpenGram writes diagnostic logs that can grow over time and take up storage.\n\nTurn logging off to stop new logs, or delete the logs already stored.</string>
+    <string name="OwpengramLoggingMessageOff">Logging is off. OwpenGram is not writing new diagnostic logs.\n\nYou can still delete the logs left from before.</string>
+    <string name="OwpengramLoggingTurnOff">Turn off</string>
+    <string name="OwpengramLoggingTurnOn">Turn on</string>
+    <string name="OwpengramLoggingTurnedOff">Logging turned off</string>
+    <string name="OwpengramLoggingTurnedOn">Logging turned on</string>
+    <string name="OwpengramLoggingDelete">Delete logs</string>
+    <string name="OwpengramLoggingDeletedSize">Deleted %1$s of logs</string>
+    <string name="OwpengramLoggingNothingToDelete">No stored logs to delete</string>
+</resources>
