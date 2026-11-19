@@ -1,0 +1,57 @@
+name: Hotfix photo upload response
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Guard the profile photo upload callback
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+
+          path = Path("TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java")
+          source = path.read_text(encoding="utf-8")
+          anchor = (
+              "                    if (error == null) {\n"
+              "                        TLRPC.User user = getMessagesController().getUser(getUserConfig().getClientUserId());\n"
+          )
+          replacement = (
+              "                    if (error == null && response instanceof TLRPC.TL_photos_photo && ((TLRPC.TL_photos_photo) response).photo != null) {\n"
+              "                        TLRPC.User user = getMessagesController().getUser(getUserConfig().getClientUserId());\n"
+          )
+          if "if (error == null && response instanceof TLRPC.TL_photos_photo" in source:
+              sys.exit("already patched")
+          count = source.count(anchor)
+          if count != 1:
+              sys.exit(f"expected exactly one anchor, found {count}")
+          path.write_text(source.replace(anchor, replacement), encoding="utf-8")
+          print("patched")
+          PY
+          grep -n "if (error == null && response instanceof TLRPC.TL_photos_photo" TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java
+
+      - name: Commit and push
+        run: |
+          git config user.name "Meralchen"
+          git config user.email "67538314+Meralchen@users.noreply.github.com"
+          git rm .github/workflows/hotfix-photo.yml
+          git add TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java
+          git commit -m "fix: skip the profile photo update when the server returns no photo
+
+A self-hosted server can answer photos.uploadProfilePhoto with photos.photoEmpty
+instead of photos.photo. The profile screen cast the response unconditionally
+and crashed; only process the response when it actually contains a photo, and
+let the existing cleanup reset the upload UI otherwise."
+          git push origin HEAD:main
