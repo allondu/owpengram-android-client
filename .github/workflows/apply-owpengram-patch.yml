@@ -1,0 +1,48 @@
+name: Apply OwpenGram media patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_b64:
+        description: 'gzip and base64 encoded source patch'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Apply the media patch
+        env:
+          PATCH_B64: ${{ github.event.inputs.patch_b64 }}
+        run: |
+          printf '%s' "$PATCH_B64" | base64 -d | gunzip > owpengram.patch
+          git apply --whitespace=nowarn owpengram.patch
+          rm owpengram.patch
+          grep -n "isVideoFileDocument" TMessagesProj/src/main/java/org/telegram/messenger/MessageObject.java
+          grep -n "hideMediaFromGallery" TMessagesProj/src/main/java/org/telegram/messenger/SharedConfig.java
+
+      - name: Commit and push
+        run: |
+          git config user.name "Meralchen"
+          git config user.email "67538314+Meralchen@users.noreply.github.com"
+          git rm .github/workflows/apply-owpengram-patch.yml
+          git add -A TMessagesProj/src/main
+          git commit -m "feat: play video files in the app and keep downloads out of the gallery
+
+          Videos sent as files lose the video attribute, so they fell through to the
+          external document viewer. Treat video MIME types and extensions as playable
+          videos in the built-in viewer, while leaving the chat bubble as a file.
+
+          Downloads also went to public /sdcard/OwpenGram on Android 10 and were indexed
+          by the gallery. Add a Keep out of gallery switch (on by default) that skips
+          automatic gallery saves and keeps media in app-private storage."
+          git push origin HEAD:main
