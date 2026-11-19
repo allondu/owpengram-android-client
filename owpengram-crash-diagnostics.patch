@@ -1,0 +1,421 @@
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java b/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+index ee6cadcb5..c25469d2a 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+@@ -84,11 +84,8 @@ public class BuildVars {
+      */
+     private static void dumpCrashToFile(Thread thread, Throwable exception) {
+         try {
+-            File dir = ApplicationLoader.applicationContext.getExternalFilesDir(null);
+-            if (dir == null) {
+-                dir = ApplicationLoader.applicationContext.getFilesDir();
+-            }
+-            if (dir == null) {
++            Context context = ApplicationLoader.applicationContext;
++            if (context == null) {
+                 return;
+             }
+             StringWriter buffer = new StringWriter();
+@@ -101,15 +98,28 @@ public class BuildVars {
+             writer.println();
+             exception.printStackTrace(writer);
+             writer.flush();
+-            try (FileOutputStream output = new FileOutputStream(new File(dir, "crash-last.txt"), false)) {
+-                output.write(buffer.toString().getBytes(StandardCharsets.UTF_8));
+-                output.getFD().sync();
++            byte[] data = buffer.toString().getBytes(StandardCharsets.UTF_8);
++            // Always keep a copy in internal storage: Android/data is not reachable
++            // from a file manager on newer releases, and Settings -> Logging reads
++            // the crash from here so it can be copied out of the app.
++            writeCrashFile(new File(context.getFilesDir(), "crash-last.txt"), data);
++            File external = context.getExternalFilesDir(null);
++            if (external != null) {
++                writeCrashFile(new File(external, "crash-last.txt"), data);
+             }
+         } catch (Throwable ignored) {
+             // Never let crash reporting crash the crash handler.
+         }
+     }
+ 
++    private static void writeCrashFile(File file, byte[] data) {
++        try (FileOutputStream output = new FileOutputStream(file, false)) {
++            output.write(data);
++            output.getFD().sync();
++        } catch (Throwable ignored) {
++        }
++    }
++
+     public static boolean useInvoiceBilling() {
+         return BillingController.billingClientEmpty || DEBUG_VERSION && false || ApplicationLoader.isStandaloneBuild() || isBetaApp() && false || isHuaweiStoreApp() || hasDirectCurrency();
+     }
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java b/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java
+index 166839841..10f9c23c9 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java
+@@ -317,6 +317,11 @@ public class FileLog {
+ 
+ 
+     private void init() {
++        // A log call may have passed its LOGS_ENABLED check just before the user
++        // turned logging off. Do not create a fresh log file in that window.
++        if (!BuildVars.LOGS_ENABLED) {
++            return;
++        }
+         if (initied) {
+             return;
+         }
+@@ -359,6 +364,9 @@ public class FileLog {
+     }
+ 
+     public static void ensureInitied() {
++        if (!BuildVars.LOGS_ENABLED) {
++            return;
++        }
+         getInstance().init();
+     }
+ 
+@@ -631,7 +639,19 @@ public class FileLog {
+             return;
+         }
+         if (logger.logQueue != null) {
+-            logger.logQueue.postRunnable(logger::closeWriters);
++            // Wait for queued writes and the close itself. Returning as soon as the
++            // close is queued let the log deletion run first, leaving the deleted
++            // files' blocks allocated by the still-open descriptors.
++            final java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
++            logger.logQueue.postRunnable(() -> {
++                logger.closeWriters();
++                closed.countDown();
++            });
++            try {
++                closed.await(2, java.util.concurrent.TimeUnit.SECONDS);
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            }
+         } else {
+             logger.closeWriters();
+         }
+diff --git a/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java b/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java
+index 76998e682..a5b82fdd8 100644
+--- a/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java
++++ b/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java
+@@ -10,6 +10,8 @@ import org.telegram.messenger.FileLog;
+ import org.telegram.messenger.Utilities;
+ 
+ import java.io.File;
++import java.io.FileInputStream;
++import java.nio.charset.StandardCharsets;
+ import java.util.LinkedHashSet;
+ import java.util.Set;
+ 
+@@ -46,10 +48,11 @@ public final class OwpengramLogs {
+      * the callback runs on the UI thread with the number of bytes freed.
+      */
+     public static void deleteLogs(Utilities.Callback<Long> callback) {
+-        // Close our own writers first, otherwise open file descriptors keep
+-        // the deleted files' blocks allocated until the process dies.
+-        FileLog.closeLogFiles();
+         Utilities.cacheClearQueue.postRunnable(() -> {
++            // Close our own writers first, otherwise open file descriptors keep
++            // the deleted files' blocks allocated until the process dies. This
++            // runs off the UI thread because closing waits for queued writes.
++            FileLog.closeLogFiles();
+             long size = 0;
+             for (File dir : logDirs()) {
+                 size += directorySize(dir);
+@@ -62,6 +65,44 @@ public final class OwpengramLogs {
+         });
+     }
+ 
++    /**
++     * Returns the stack trace of the last uncaught exception, or null when the
++     * app has not crashed since the file was last cleared. BuildVars writes the
++     * same content to internal and external app storage; internal is checked
++     * first because Android/data is not browsable on newer releases.
++     */
++    public static String readLastCrash() {
++        Context context = ApplicationLoader.applicationContext;
++        if (context == null) {
++            return null;
++        }
++        for (File dir : new File[]{context.getFilesDir(), context.getExternalFilesDir(null)}) {
++            if (dir == null) {
++                continue;
++            }
++            File file = new File(dir, "crash-last.txt");
++            if (!file.isFile()) {
++                continue;
++            }
++            try (FileInputStream input = new FileInputStream(file)) {
++                int max = (int) Math.min(file.length(), 256 * 1024);
++                byte[] data = new byte[max];
++                int length = 0;
++                while (length < max) {
++                    int read = input.read(data, length, max - length);
++                    if (read <= 0) {
++                        break;
++                    }
++                    length += read;
++                }
++                return new String(data, 0, length, StandardCharsets.UTF_8);
++            } catch (Exception e) {
++                // Try the next location.
++            }
++        }
++        return null;
++    }
++
+     private static SharedPreferences getPrefs() {
+         return ApplicationLoader.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+     }
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+index 9fd3f9139..99a7f7b62 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+@@ -972,29 +972,68 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+         AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
+         builder.setTitle(getString(R.string.OwpengramLoggingTitle));
+         builder.setMessage(getString(enabled ? R.string.OwpengramLoggingMessageOn : R.string.OwpengramLoggingMessageOff));
+-        builder.setPositiveButton(getString(enabled ? R.string.OwpengramLoggingTurnOff : R.string.OwpengramLoggingTurnOn), (dialog, which) -> {
+-            org.telegram.owpengram.OwpengramLogs.setEnabled(!enabled);
+-            if (listView != null && listView.adapter != null) {
+-                listView.adapter.update(true);
++        builder.setItems(new CharSequence[]{
++                getString(enabled ? R.string.OwpengramLoggingTurnOff : R.string.OwpengramLoggingTurnOn),
++                getString(R.string.OwpengramLoggingDelete),
++                getString(R.string.OwpengramLoggingViewCrash)
++        }, (dialog, which) -> {
++            if (which == 0) {
++                org.telegram.owpengram.OwpengramLogs.setEnabled(!enabled);
++                if (listView != null && listView.adapter != null) {
++                    listView.adapter.update(true);
++                }
++                BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(!enabled ? R.string.OwpengramLoggingTurnedOn : R.string.OwpengramLoggingTurnedOff)).show();
++            } else if (which == 1) {
++                org.telegram.owpengram.OwpengramLogs.deleteLogs(deleted -> {
++                    if (getParentActivity() == null) {
++                        return;
++                    }
++                    if (listView != null && listView.adapter != null) {
++                        listView.adapter.update(true);
++                    }
++                    CharSequence text = deleted > 0
++                        ? formatString(R.string.OwpengramLoggingDeletedSize, AndroidUtilities.formatFileSize(deleted))
++                        : getString(R.string.OwpengramLoggingNothingToDelete);
++                    BulletinFactory.of(this).createSimpleBulletin(R.raw.ic_delete, text).show();
++                });
++            } else if (which == 2) {
++                showLastCrashDialog();
+             }
+-            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(!enabled ? R.string.OwpengramLoggingTurnedOn : R.string.OwpengramLoggingTurnedOff)).show();
+         });
+-        builder.setNeutralButton(getString(R.string.OwpengramLoggingDelete), (dialog, which) -> org.telegram.owpengram.OwpengramLogs.deleteLogs(deleted -> {
+-            if (getParentActivity() == null) {
+-                return;
+-            }
+-            if (listView != null && listView.adapter != null) {
+-                listView.adapter.update(true);
+-            }
+-            CharSequence text = deleted > 0
+-                ? formatString(R.string.OwpengramLoggingDeletedSize, AndroidUtilities.formatFileSize(deleted))
+-                : getString(R.string.OwpengramLoggingNothingToDelete);
+-            BulletinFactory.of(this).createSimpleBulletin(R.raw.ic_delete, text).show();
+-        }));
+         builder.setNegativeButton(getString(R.string.Cancel), null);
+         showDialog(builder.create());
+     }
+ 
++    private void showLastCrashDialog() {
++        if (getParentActivity() == null) {
++            return;
++        }
++        final String crash = org.telegram.owpengram.OwpengramLogs.readLastCrash();
++        if (crash == null || crash.trim().isEmpty()) {
++            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(R.string.OwpengramLoggingNoCrash)).show();
++            return;
++        }
++        android.widget.ScrollView scroll = new android.widget.ScrollView(getParentActivity());
++        TextView text = new TextView(getParentActivity());
++        text.setText(crash);
++        text.setTextSize(12);
++        text.setTypeface(android.graphics.Typeface.MONOSPACE);
++        text.setTextIsSelectable(true);
++        text.setTextColor(getThemedColor(Theme.key_dialogTextBlack));
++        text.setPadding(dp(24), dp(12), dp(24), dp(12));
++        scroll.addView(text);
++        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
++        builder.setTitle(getString(R.string.OwpengramLoggingLastCrashTitle));
++        builder.setView(scroll);
++        builder.setPositiveButton(getString(R.string.Copy), (dialog, which) -> {
++            android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getParentActivity().getSystemService(Context.CLIPBOARD_SERVICE);
++            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OwpenGram crash", crash));
++            BulletinFactory.of(this).createSimpleBulletin(R.raw.copy, getString(R.string.OwpengramLoggingCrashCopied)).show();
++        });
++        builder.setNegativeButton(getString(R.string.Close), null);
++        showDialog(builder.create());
++    }
++
+     private String serverLabel(int account) {
+         String name = org.telegram.owpengram.OwpengramServers.serverNameForAccount(account);
+         return name != null ? name : getString(R.string.AppName);
+diff --git a/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelManager.java b/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelManager.java
+index a1a715de4..2724e78aa 100644
+--- a/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelManager.java
++++ b/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelManager.java
+@@ -185,7 +185,14 @@ public final class CloudflaredTunnelManager {
+                         @Override
+                         public void onActivityStarted(Activity activity) {
+                             visibleActivities++;
+-                            resumePending();
++                            // Activity lifecycle callbacks run on the main thread: an
++                            // exception here would take the whole app down, so a tunnel
++                            // problem must stay contained.
++                            try {
++                                resumePending();
++                            } catch (Throwable t) {
++                                FileLog.e("Unable to resume pending Cloudflared tunnels", t);
++                            }
+                         }
+ 
+                         @Override
+@@ -237,9 +244,14 @@ public final class CloudflaredTunnelManager {
+             return;
+         }
+         for (String hostname : new ArrayList<>(pending)) {
+-            if (!startTunnel(hostname).started) {
+-                // Still blocked (for example the app went background again); keep it queued.
++            try {
++                if (!startTunnel(hostname).started) {
++                    // Still blocked (for example the app went background again); keep it queued.
++                    pending.add(hostname);
++                }
++            } catch (Throwable t) {
+                 pending.add(hostname);
++                FileLog.e("Unable to start pending Cloudflared tunnel for " + hostname, t);
+             }
+         }
+     }
+diff --git a/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelService.java b/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelService.java
+index f2dff8f81..2c595b8fb 100644
+--- a/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelService.java
++++ b/TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelService.java
+@@ -154,8 +154,18 @@ public final class CloudflaredTunnelService extends Service {
+                 processes.put(key, process);
+                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                     String line;
++                    int loggedLines = 0;
+                     while (!stopping && (line = reader.readLine()) != null) {
+-                        FileLog.d("Cloudflared: " + line);
++                        // Cloudflared is chatty (every reconnect prints a burst). Logging
++                        // each line queues an unbounded amount of work in FileLog and can
++                        // fill the device, so keep only the startup window of a run.
++                        if (loggedLines < 120) {
++                            FileLog.d("Cloudflared: " + (line.length() > 400 ? line.substring(0, 400) : line));
++                        }
++                        loggedLines++;
++                    }
++                    if (loggedLines > 120) {
++                        FileLog.d("Cloudflared: suppressed " + (loggedLines - 120) + " more output lines");
+                     }
+                 }
+                 int exitCode = process.waitFor();
+@@ -248,35 +258,45 @@ public final class CloudflaredTunnelService extends Service {
+         networkCallback = new ConnectivityManager.NetworkCallback() {
+             @Override
+             public void onAvailable(Network network) {
+-                boolean changed;
+-                synchronized (this) {
+-                    changed = hasSeenNetwork && (activeNetwork == null || !activeNetwork.equals(network));
+-                    activeNetwork = network;
+-                    hasSeenNetwork = true;
+-                }
+-                synchronized (networkLock) {
+-                    networkAvailable = true;
+-                    networkLock.notifyAll();
+-                }
+-                if (changed) {
+-                    restartTunnelsForNetworkChange();
++                // Connectivity callbacks run on a system thread with no crash
++                // guard: anything thrown here killed the process.
++                try {
++                    boolean changed;
++                    synchronized (this) {
++                        changed = hasSeenNetwork && (activeNetwork == null || !activeNetwork.equals(network));
++                        activeNetwork = network;
++                        hasSeenNetwork = true;
++                    }
++                    synchronized (networkLock) {
++                        networkAvailable = true;
++                        networkLock.notifyAll();
++                    }
++                    if (changed) {
++                        restartTunnelsForNetworkChange();
++                    }
++                } catch (Throwable t) {
++                    FileLog.e("Unable to handle the Cloudflared network change", t);
+                 }
+             }
+ 
+             @Override
+             public void onLost(Network network) {
+-                boolean changed;
+-                synchronized (this) {
+-                    changed = network.equals(activeNetwork);
+-                    if (changed) {
+-                        activeNetwork = null;
++                try {
++                    boolean changed;
++                    synchronized (this) {
++                        changed = network.equals(activeNetwork);
++                        if (changed) {
++                            activeNetwork = null;
++                        }
+                     }
+-                }
+-                if (changed) {
+-                    synchronized (networkLock) {
+-                        networkAvailable = false;
++                    if (changed) {
++                        synchronized (networkLock) {
++                            networkAvailable = false;
++                        }
++                        restartTunnelsForNetworkChange();
+                     }
+-                    restartTunnelsForNetworkChange();
++                } catch (Throwable t) {
++                    FileLog.e("Unable to handle the Cloudflared network loss", t);
+                 }
+             }
+         };
+@@ -293,10 +313,16 @@ public final class CloudflaredTunnelService extends Service {
+     private void restartTunnelsForNetworkChange() {
+         networkGeneration++;
+         for (Process process : processes.values()) {
+-            process.destroy();
++            try {
++                process.destroy();
++            } catch (Throwable ignored) {
++            }
+         }
+         for (Thread worker : workers.values()) {
+-            worker.interrupt();
++            try {
++                worker.interrupt();
++            } catch (Throwable ignored) {
++            }
+         }
+     }
+ 
+diff --git a/TMessagesProj/src/main/res/values/owpengram_logs.xml b/TMessagesProj/src/main/res/values/owpengram_logs.xml
+index 68b4a9e2f..f95b0bcce 100644
+--- a/TMessagesProj/src/main/res/values/owpengram_logs.xml
++++ b/TMessagesProj/src/main/res/values/owpengram_logs.xml
+@@ -14,4 +14,8 @@
+     <string name="OwpengramLoggingDelete">Delete logs</string>
+     <string name="OwpengramLoggingDeletedSize">Deleted %1$s of logs</string>
+     <string name="OwpengramLoggingNothingToDelete">No stored logs to delete</string>
++    <string name="OwpengramLoggingViewCrash">Show last crash</string>
++    <string name="OwpengramLoggingLastCrashTitle">Last crash</string>
++    <string name="OwpengramLoggingNoCrash">No crash has been recorded.</string>
++    <string name="OwpengramLoggingCrashCopied">Crash details copied</string>
+ </resources>
