@@ -57,17 +57,22 @@ public class BuildVars {
         if (ApplicationLoader.applicationContext != null) {
             SharedPreferences sharedPreferences = ApplicationLoader.applicationContext.getSharedPreferences("systemConfig", Context.MODE_PRIVATE);
             LOGS_ENABLED = DEBUG_VERSION || sharedPreferences.getBoolean("logsEnabled", DEBUG_VERSION);
-            final Thread.UncaughtExceptionHandler pastHandler = Thread.getDefaultUncaughtExceptionHandler();
-            Thread.setDefaultUncaughtExceptionHandler((thread, exception) -> {
-                if (LOGS_ENABLED) {
-                    FileLog.fatal(exception, false);
-                }
-                dumpCrashToFile(thread, exception);
-                if (pastHandler != null) {
-                    pastHandler.uncaughtException(thread, exception);
-                }
-            });
         }
+        // The handler must be installed even when this class happens to be loaded before
+        // ApplicationLoader.onCreate() has stored the context: the old version skipped
+        // installation forever in that case, which is why some crashes left no trace.
+        // dumpCrashToFile() re-reads the context at crash time and bails out safely if it
+        // is still missing.
+        final Thread.UncaughtExceptionHandler pastHandler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, exception) -> {
+            if (LOGS_ENABLED) {
+                FileLog.fatal(exception, false);
+            }
+            dumpCrashToFile(thread, exception);
+            if (pastHandler != null) {
+                pastHandler.uncaughtException(thread, exception);
+            }
+        });
     }
 
     /**
