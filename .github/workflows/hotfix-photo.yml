@@ -48,10 +48,5 @@ jobs:
           git config user.email "67538314+Meralchen@users.noreply.github.com"
           git rm .github/workflows/hotfix-photo.yml
           git add TMessagesProj/src/main/java/org/telegram/ui/ProfileActivity.java
-          git commit -m "fix: skip the profile photo update when the server returns no photo
-
-A self-hosted server can answer photos.uploadProfilePhoto with photos.photoEmpty
-instead of photos.photo. The profile screen cast the response unconditionally
-and crashed; only process the response when it actually contains a photo, and
-let the existing cleanup reset the upload UI otherwise."
+          git commit -m "fix: skip the profile photo update when the server returns no photo" -m "A self-hosted server can answer photos.uploadProfilePhoto with photos.photoEmpty instead of photos.photo. The profile screen cast the response unconditionally and crashed; only process the response when it actually contains a photo, and let the existing cleanup reset the upload UI otherwise."
           git push origin HEAD:main
