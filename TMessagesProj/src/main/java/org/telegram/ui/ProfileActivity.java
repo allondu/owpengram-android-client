@@ -12878,7 +12878,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     req.flags |= 16;
                 }
                 avatarUploadingRequest = getConnectionsManager().sendRequest(req, (response, error) -> AndroidUtilities.runOnUIThread(() -> {
-                    if (error == null) {
+                    if (error == null && response instanceof TLRPC.TL_photos_photo && ((TLRPC.TL_photos_photo) response).photo != null) {
                         TLRPC.User user = getMessagesController().getUser(getUserConfig().getClientUserId());
                         if (user == null) {
                             user = getUserConfig().getCurrentUser();
