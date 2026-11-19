@@ -788,7 +788,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             items.add(SettingCell.Factory.of(19, 0xFF55CA47, 0xFF27B434, R.drawable.settings_policy, getString(R.string.PrivacyPolicy)));
         }
         items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, "OwpenGram"));
-        items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_old, getString(R.string.CheckForUpdates)));
+        items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_devices, getString(R.string.CheckForUpdates)));
 
         if (SharedSettings.experimentalSettingsAllowed.get()) {
             items.add(UItem.asShadow(null));
