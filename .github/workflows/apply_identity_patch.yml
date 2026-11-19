@@ -1,0 +1,40 @@
+name: Apply encRgraM identity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Pillow
+        run: python3 -m pip install --quiet pillow
+
+      - name: Download source artwork
+        run: |
+          curl -fsSL -o /tmp/logo1.jpg 'https://www.codebuff.com/api/v1/generate-image/73d64138-0ab7-47f6-af63-6a705eba409b.jpg'
+          curl -fsSL -o /tmp/logo3.jpg 'https://www.codebuff.com/api/v1/generate-image/6bc0ff55-e941-4bcb-a8ef-e82e8ce5df86.jpg'
+          curl -fsSL -o /tmp/logo4.jpg 'https://www.codebuff.com/api/v1/generate-image/b44d9eda-bedc-40b0-b767-587038361728.jpg'
+
+      - name: Apply source changes and generate icons
+        run: |
+          gzip -dc owpengram-identity.patch.gz.b64 > /tmp/identity.patch
+          git apply --whitespace=nowarn /tmp/identity.patch
+          python3 owpengram-generate-icons.py /tmp/logo1.jpg /tmp/logo3.jpg /tmp/logo4.jpg
+          while IFS= read -r path; do
+            [ -n "$path" ] && rm -f "$path"
+          done < owpengram-deleted-icons.txt
+          rm -f owpengram-identity.patch.gz.b64 owpengram-generate-icons.py owpengram-deleted-icons.txt
+          rm -f .github/workflows/apply_identity_patch.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: add encRgraM identity and Secret Chat Only demo'
+          git push origin HEAD:${{ github.ref_name }}
