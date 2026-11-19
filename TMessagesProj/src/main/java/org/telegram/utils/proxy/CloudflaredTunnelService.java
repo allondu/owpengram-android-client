@@ -154,8 +154,18 @@ public final class CloudflaredTunnelService extends Service {
                 processes.put(key, process);
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
+                    int loggedLines = 0;
                     while (!stopping && (line = reader.readLine()) != null) {
-                        FileLog.d("Cloudflared: " + line);
+                        // Cloudflared is chatty (every reconnect prints a burst). Logging
+                        // each line queues an unbounded amount of work in FileLog and can
+                        // fill the device, so keep only the startup window of a run.
+                        if (loggedLines < 120) {
+                            FileLog.d("Cloudflared: " + (line.length() > 400 ? line.substring(0, 400) : line));
+                        }
+                        loggedLines++;
+                    }
+                    if (loggedLines > 120) {
+                        FileLog.d("Cloudflared: suppressed " + (loggedLines - 120) + " more output lines");
                     }
                 }
                 int exitCode = process.waitFor();
@@ -248,35 +258,45 @@ public final class CloudflaredTunnelService extends Service {
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
-                boolean changed;
-                synchronized (this) {
-                    changed = hasSeenNetwork && (activeNetwork == null || !activeNetwork.equals(network));
-                    activeNetwork = network;
-                    hasSeenNetwork = true;
-                }
-                synchronized (networkLock) {
-                    networkAvailable = true;
-                    networkLock.notifyAll();
-                }
-                if (changed) {
-                    restartTunnelsForNetworkChange();
+                // Connectivity callbacks run on a system thread with no crash
+                // guard: anything thrown here killed the process.
+                try {
+                    boolean changed;
+                    synchronized (this) {
+                        changed = hasSeenNetwork && (activeNetwork == null || !activeNetwork.equals(network));
+                        activeNetwork = network;
+                        hasSeenNetwork = true;
+                    }
+                    synchronized (networkLock) {
+                        networkAvailable = true;
+                        networkLock.notifyAll();
+                    }
+                    if (changed) {
+                        restartTunnelsForNetworkChange();
+                    }
+                } catch (Throwable t) {
+                    FileLog.e("Unable to handle the Cloudflared network change", t);
                 }
             }
 
             @Override
             public void onLost(Network network) {
-                boolean changed;
-                synchronized (this) {
-                    changed = network.equals(activeNetwork);
+                try {
+                    boolean changed;
+                    synchronized (this) {
+                        changed = network.equals(activeNetwork);
+                        if (changed) {
+                            activeNetwork = null;
+                        }
+                    }
                     if (changed) {
-                        activeNetwork = null;
+                        synchronized (networkLock) {
+                            networkAvailable = false;
+                        }
+                        restartTunnelsForNetworkChange();
                     }
-                }
-                if (changed) {
-                    synchronized (networkLock) {
-                        networkAvailable = false;
-                    }
-                    restartTunnelsForNetworkChange();
+                } catch (Throwable t) {
+                    FileLog.e("Unable to handle the Cloudflared network loss", t);
                 }
             }
         };
@@ -293,10 +313,16 @@ public final class CloudflaredTunnelService extends Service {
     private void restartTunnelsForNetworkChange() {
         networkGeneration++;
         for (Process process : processes.values()) {
-            process.destroy();
+            try {
+                process.destroy();
+            } catch (Throwable ignored) {
+            }
         }
         for (Thread worker : workers.values()) {
-            worker.interrupt();
+            try {
+                worker.interrupt();
+            } catch (Throwable ignored) {
+            }
         }
     }
 

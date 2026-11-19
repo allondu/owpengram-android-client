@@ -185,7 +185,14 @@ public final class CloudflaredTunnelManager {
                         @Override
                         public void onActivityStarted(Activity activity) {
                             visibleActivities++;
-                            resumePending();
+                            // Activity lifecycle callbacks run on the main thread: an
+                            // exception here would take the whole app down, so a tunnel
+                            // problem must stay contained.
+                            try {
+                                resumePending();
+                            } catch (Throwable t) {
+                                FileLog.e("Unable to resume pending Cloudflared tunnels", t);
+                            }
                         }
 
                         @Override
@@ -237,9 +244,14 @@ public final class CloudflaredTunnelManager {
             return;
         }
         for (String hostname : new ArrayList<>(pending)) {
-            if (!startTunnel(hostname).started) {
-                // Still blocked (for example the app went background again); keep it queued.
+            try {
+                if (!startTunnel(hostname).started) {
+                    // Still blocked (for example the app went background again); keep it queued.
+                    pending.add(hostname);
+                }
+            } catch (Throwable t) {
                 pending.add(hostname);
+                FileLog.e("Unable to start pending Cloudflared tunnel for " + hostname, t);
             }
         }
     }

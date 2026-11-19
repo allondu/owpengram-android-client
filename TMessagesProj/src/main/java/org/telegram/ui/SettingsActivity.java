@@ -972,26 +972,65 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
         builder.setTitle(getString(R.string.OwpengramLoggingTitle));
         builder.setMessage(getString(enabled ? R.string.OwpengramLoggingMessageOn : R.string.OwpengramLoggingMessageOff));
-        builder.setPositiveButton(getString(enabled ? R.string.OwpengramLoggingTurnOff : R.string.OwpengramLoggingTurnOn), (dialog, which) -> {
-            org.telegram.owpengram.OwpengramLogs.setEnabled(!enabled);
-            if (listView != null && listView.adapter != null) {
-                listView.adapter.update(true);
+        builder.setItems(new CharSequence[]{
+                getString(enabled ? R.string.OwpengramLoggingTurnOff : R.string.OwpengramLoggingTurnOn),
+                getString(R.string.OwpengramLoggingDelete),
+                getString(R.string.OwpengramLoggingViewCrash)
+        }, (dialog, which) -> {
+            if (which == 0) {
+                org.telegram.owpengram.OwpengramLogs.setEnabled(!enabled);
+                if (listView != null && listView.adapter != null) {
+                    listView.adapter.update(true);
+                }
+                BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(!enabled ? R.string.OwpengramLoggingTurnedOn : R.string.OwpengramLoggingTurnedOff)).show();
+            } else if (which == 1) {
+                org.telegram.owpengram.OwpengramLogs.deleteLogs(deleted -> {
+                    if (getParentActivity() == null) {
+                        return;
+                    }
+                    if (listView != null && listView.adapter != null) {
+                        listView.adapter.update(true);
+                    }
+                    CharSequence text = deleted > 0
+                        ? formatString(R.string.OwpengramLoggingDeletedSize, AndroidUtilities.formatFileSize(deleted))
+                        : getString(R.string.OwpengramLoggingNothingToDelete);
+                    BulletinFactory.of(this).createSimpleBulletin(R.raw.ic_delete, text).show();
+                });
+            } else if (which == 2) {
+                showLastCrashDialog();
             }
-            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(!enabled ? R.string.OwpengramLoggingTurnedOn : R.string.OwpengramLoggingTurnedOff)).show();
         });
-        builder.setNeutralButton(getString(R.string.OwpengramLoggingDelete), (dialog, which) -> org.telegram.owpengram.OwpengramLogs.deleteLogs(deleted -> {
-            if (getParentActivity() == null) {
-                return;
-            }
-            if (listView != null && listView.adapter != null) {
-                listView.adapter.update(true);
-            }
-            CharSequence text = deleted > 0
-                ? formatString(R.string.OwpengramLoggingDeletedSize, AndroidUtilities.formatFileSize(deleted))
-                : getString(R.string.OwpengramLoggingNothingToDelete);
-            BulletinFactory.of(this).createSimpleBulletin(R.raw.ic_delete, text).show();
-        }));
         builder.setNegativeButton(getString(R.string.Cancel), null);
+        showDialog(builder.create());
+    }
+
+    private void showLastCrashDialog() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        final String crash = org.telegram.owpengram.OwpengramLogs.readLastCrash();
+        if (crash == null || crash.trim().isEmpty()) {
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(R.string.OwpengramLoggingNoCrash)).show();
+            return;
+        }
+        android.widget.ScrollView scroll = new android.widget.ScrollView(getParentActivity());
+        TextView text = new TextView(getParentActivity());
+        text.setText(crash);
+        text.setTextSize(12);
+        text.setTypeface(android.graphics.Typeface.MONOSPACE);
+        text.setTextIsSelectable(true);
+        text.setTextColor(getThemedColor(Theme.key_dialogTextBlack));
+        text.setPadding(dp(24), dp(12), dp(24), dp(12));
+        scroll.addView(text);
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
+        builder.setTitle(getString(R.string.OwpengramLoggingLastCrashTitle));
+        builder.setView(scroll);
+        builder.setPositiveButton(getString(R.string.Copy), (dialog, which) -> {
+            android.content.ClipboardManager clipboard = (android.content.ClipboardManager) getParentActivity().getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OwpenGram crash", crash));
+            BulletinFactory.of(this).createSimpleBulletin(R.raw.copy, getString(R.string.OwpengramLoggingCrashCopied)).show();
+        });
+        builder.setNegativeButton(getString(R.string.Close), null);
         showDialog(builder.create());
     }
 

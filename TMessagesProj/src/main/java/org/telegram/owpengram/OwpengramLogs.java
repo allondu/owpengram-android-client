@@ -10,6 +10,8 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.Utilities;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
@@ -46,10 +48,11 @@ public final class OwpengramLogs {
      * the callback runs on the UI thread with the number of bytes freed.
      */
     public static void deleteLogs(Utilities.Callback<Long> callback) {
-        // Close our own writers first, otherwise open file descriptors keep
-        // the deleted files' blocks allocated until the process dies.
-        FileLog.closeLogFiles();
         Utilities.cacheClearQueue.postRunnable(() -> {
+            // Close our own writers first, otherwise open file descriptors keep
+            // the deleted files' blocks allocated until the process dies. This
+            // runs off the UI thread because closing waits for queued writes.
+            FileLog.closeLogFiles();
             long size = 0;
             for (File dir : logDirs()) {
                 size += directorySize(dir);
@@ -60,6 +63,44 @@ public final class OwpengramLogs {
                 AndroidUtilities.runOnUIThread(() -> callback.run(deleted));
             }
         });
+    }
+
+    /**
+     * Returns the stack trace of the last uncaught exception, or null when the
+     * app has not crashed since the file was last cleared. BuildVars writes the
+     * same content to internal and external app storage; internal is checked
+     * first because Android/data is not browsable on newer releases.
+     */
+    public static String readLastCrash() {
+        Context context = ApplicationLoader.applicationContext;
+        if (context == null) {
+            return null;
+        }
+        for (File dir : new File[]{context.getFilesDir(), context.getExternalFilesDir(null)}) {
+            if (dir == null) {
+                continue;
+            }
+            File file = new File(dir, "crash-last.txt");
+            if (!file.isFile()) {
+                continue;
+            }
+            try (FileInputStream input = new FileInputStream(file)) {
+                int max = (int) Math.min(file.length(), 256 * 1024);
+                byte[] data = new byte[max];
+                int length = 0;
+                while (length < max) {
+                    int read = input.read(data, length, max - length);
+                    if (read <= 0) {
+                        break;
+                    }
+                    length += read;
+                }
+                return new String(data, 0, length, StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                // Try the next location.
+            }
+        }
+        return null;
     }
 
     private static SharedPreferences getPrefs() {

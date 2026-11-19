@@ -14,4 +14,8 @@
     <string name="OwpengramLoggingDelete">Delete logs</string>
     <string name="OwpengramLoggingDeletedSize">Deleted %1$s of logs</string>
     <string name="OwpengramLoggingNothingToDelete">No stored logs to delete</string>
+    <string name="OwpengramLoggingViewCrash">Show last crash</string>
+    <string name="OwpengramLoggingLastCrashTitle">Last crash</string>
+    <string name="OwpengramLoggingNoCrash">No crash has been recorded.</string>
+    <string name="OwpengramLoggingCrashCopied">Crash details copied</string>
 </resources>

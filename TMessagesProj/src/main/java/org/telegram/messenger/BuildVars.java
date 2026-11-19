@@ -84,11 +84,8 @@ public class BuildVars {
      */
     private static void dumpCrashToFile(Thread thread, Throwable exception) {
         try {
-            File dir = ApplicationLoader.applicationContext.getExternalFilesDir(null);
-            if (dir == null) {
-                dir = ApplicationLoader.applicationContext.getFilesDir();
-            }
-            if (dir == null) {
+            Context context = ApplicationLoader.applicationContext;
+            if (context == null) {
                 return;
             }
             StringWriter buffer = new StringWriter();
@@ -101,12 +98,25 @@ public class BuildVars {
             writer.println();
             exception.printStackTrace(writer);
             writer.flush();
-            try (FileOutputStream output = new FileOutputStream(new File(dir, "crash-last.txt"), false)) {
-                output.write(buffer.toString().getBytes(StandardCharsets.UTF_8));
-                output.getFD().sync();
+            byte[] data = buffer.toString().getBytes(StandardCharsets.UTF_8);
+            // Always keep a copy in internal storage: Android/data is not reachable
+            // from a file manager on newer releases, and Settings -> Logging reads
+            // the crash from here so it can be copied out of the app.
+            writeCrashFile(new File(context.getFilesDir(), "crash-last.txt"), data);
+            File external = context.getExternalFilesDir(null);
+            if (external != null) {
+                writeCrashFile(new File(external, "crash-last.txt"), data);
             }
         } catch (Throwable ignored) {
             // Never let crash reporting crash the crash handler.
+        }
+    }
+
+    private static void writeCrashFile(File file, byte[] data) {
+        try (FileOutputStream output = new FileOutputStream(file, false)) {
+            output.write(data);
+            output.getFD().sync();
+        } catch (Throwable ignored) {
         }
     }
 

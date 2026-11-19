@@ -317,6 +317,11 @@ public class FileLog {
 
 
     private void init() {
+        // A log call may have passed its LOGS_ENABLED check just before the user
+        // turned logging off. Do not create a fresh log file in that window.
+        if (!BuildVars.LOGS_ENABLED) {
+            return;
+        }
         if (initied) {
             return;
         }
@@ -359,6 +364,9 @@ public class FileLog {
     }
 
     public static void ensureInitied() {
+        if (!BuildVars.LOGS_ENABLED) {
+            return;
+        }
         getInstance().init();
     }
 
@@ -631,7 +639,19 @@ public class FileLog {
             return;
         }
         if (logger.logQueue != null) {
-            logger.logQueue.postRunnable(logger::closeWriters);
+            // Wait for queued writes and the close itself. Returning as soon as the
+            // close is queued let the log deletion run first, leaving the deleted
+            // files' blocks allocated by the still-open descriptors.
+            final java.util.concurrent.CountDownLatch closed = new java.util.concurrent.CountDownLatch(1);
+            logger.logQueue.postRunnable(() -> {
+                logger.closeWriters();
+                closed.countDown();
+            });
+            try {
+                closed.await(2, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         } else {
             logger.closeWriters();
         }
