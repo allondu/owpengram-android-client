@@ -1,2 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This fork still reads many strings with getString(R.string...), so keep
+     every string resource even when resource shrinking is enabled. -->
 <resources xmlns:tools="http://schemas.android.com/tools"
     tools:keep="@string/*" />
