@@ -56,6 +56,7 @@ public final class OwpengramUpdater {
     private static final Pattern TAG = Pattern.compile("^[Oo](\\d+)$");
 
     private static final String PREFS = "owpengram_updater";
+    private static final String KEY_BUILD = "build";
     private static final String KEY_LAST_CHECK = "last_check";
     private static final String KEY_PROMPTED_TAG = "prompted_tag";
     private static final String KEY_PROMPTED_AT = "prompted_at";
@@ -75,6 +76,7 @@ public final class OwpengramUpdater {
 
     private static boolean checking;
     private static boolean periodicScheduled;
+    private static boolean firstCheckInProcess = true;
     private static volatile TLRPC.TL_help_appUpdate pendingUpdate;
 
     private OwpengramUpdater() {
@@ -93,8 +95,18 @@ public final class OwpengramUpdater {
 
     public static void check(boolean force, Callback callback) {
         final SharedPreferences prefs = ApplicationLoader.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        if (prefs.getInt(KEY_BUILD, 0) != BuildVars.OWPENGRAM_BUILD) {
+            // A freshly installed or just updated build asks GitHub once right away;
+            // the previous build's check time must not hide the release it was upgraded to.
+            prefs.edit().putInt(KEY_BUILD, BuildVars.OWPENGRAM_BUILD).remove(KEY_LAST_CHECK).apply();
+        }
         final long now = System.currentTimeMillis();
-        if (!force && Math.abs(now - prefs.getLong(KEY_LAST_CHECK, 0)) < CHECK_INTERVAL_MS) {
+        final boolean skipThrottle;
+        synchronized (OwpengramUpdater.class) {
+            skipThrottle = firstCheckInProcess;
+            firstCheckInProcess = false;
+        }
+        if (!force && !skipThrottle && Math.abs(now - prefs.getLong(KEY_LAST_CHECK, 0)) < CHECK_INTERVAL_MS) {
             final TLRPC.TL_help_appUpdate pending = pendingUpdate;
             if (pending != null && !ApplicationLoader.mainInterfacePaused) {
                 markPrompted(prefs, pending.version);
