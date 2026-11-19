@@ -18,6 +18,7 @@ import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.core.widget.NestedScrollView;
 
@@ -30,9 +31,13 @@ import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.R;
 import org.telegram.messenger.browser.Browser;
 import org.telegram.messenger.SvgHelper;
+import org.telegram.owpengram.OwpengramUpdateDownloader;
+import org.telegram.owpengram.OwpengramUpdater;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.BottomSheet;
 import org.telegram.ui.ActionBar.Theme;
+
+import java.io.File;
 
 public class UpdateAppAlertDialog extends BottomSheet {
 
@@ -60,6 +65,8 @@ public class UpdateAppAlertDialog extends BottomSheet {
     private int[] location = new int[2];
 
     private boolean animationInProgress;
+    private BottomSheetCell doneButton;
+    private boolean downloadStarted;
 
     public class BottomSheetCell extends FrameLayout {
 
@@ -293,15 +300,23 @@ public class UpdateAppAlertDialog extends BottomSheet {
         shadow.setTag(1);
         container.addView(shadow, frameLayoutParams);
 
-        BottomSheetCell doneButton = new BottomSheetCell(context, false);
+        doneButton = new BottomSheetCell(context, false);
         doneButton.setText(LocaleController.formatString("AppUpdateDownloadNow", R.string.AppUpdateDownloadNow), false);
         doneButton.background.setOnClickListener(v -> {
+            if (downloadStarted) {
+                return;
+            }
             if (appUpdate.document != null) {
                 FileLoader.getInstance(accountNum).loadFile(appUpdate.document, "update", FileLoader.PRIORITY_NORMAL, 1);
+                dismiss();
+            } else if (!TextUtils.isEmpty(appUpdate.url)
+                    && appUpdate.url.toLowerCase().endsWith(".apk")
+                    && OwpengramUpdater.enabled()) {
+                startInAppDownload();
             } else if (!TextUtils.isEmpty(appUpdate.url)) {
                 Browser.openUrl(getContext(), appUpdate.url);
+                dismiss();
             }
-            dismiss();
         });
         container.addView(doneButton, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 50, Gravity.LEFT | Gravity.BOTTOM, 0, 0, 0, 50));
 
@@ -309,6 +324,41 @@ public class UpdateAppAlertDialog extends BottomSheet {
         scheduleButton.setText(LocaleController.getString(R.string.AppUpdateRemindMeLater), false);
         scheduleButton.background.setOnClickListener(v -> dismiss());
         container.addView(scheduleButton, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, 50, Gravity.LEFT | Gravity.BOTTOM, 0, 0, 0, 0));
+    }
+
+    private void startInAppDownload() {
+        final Context context = getContext();
+        final File existing = OwpengramUpdateDownloader.getDownloadedFile(appUpdate);
+        if (existing != null) {
+            dismiss();
+            if (!OwpengramUpdateDownloader.install(context, existing)) {
+                Toast.makeText(context, LocaleController.getString(R.string.AppUpdateInstallFailed), Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+        downloadStarted = true;
+        doneButton.setText(LocaleController.formatString("AppUpdateDownloading", R.string.AppUpdateDownloading, 0), false);
+        OwpengramUpdateDownloader.download(context, appUpdate, new OwpengramUpdateDownloader.Listener() {
+            @Override
+            public void onProgress(int percent) {
+                doneButton.setText(LocaleController.formatString("AppUpdateDownloading", R.string.AppUpdateDownloading, percent), false);
+            }
+
+            @Override
+            public void onCompleted(File apk) {
+                dismiss();
+                if (!OwpengramUpdateDownloader.install(context, apk)) {
+                    Toast.makeText(context, LocaleController.getString(R.string.AppUpdateInstallFailed), Toast.LENGTH_LONG).show();
+                }
+            }
+
+            @Override
+            public void onError(String message) {
+                downloadStarted = false;
+                doneButton.setText(LocaleController.getString(R.string.AppUpdateDownloadNow), false);
+                Toast.makeText(context, LocaleController.formatString("AppUpdateDownloadFailed", R.string.AppUpdateDownloadFailed, message), Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
     private void runShadowAnimation(final int num, final boolean show) {

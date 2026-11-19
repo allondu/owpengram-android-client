@@ -788,6 +788,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             items.add(SettingCell.Factory.of(19, 0xFF55CA47, 0xFF27B434, R.drawable.settings_policy, getString(R.string.PrivacyPolicy)));
         }
         items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, "OwpenGram"));
+        items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_old, getString(R.string.CheckForUpdates)));
 
         if (SharedSettings.experimentalSettingsAllowed.get()) {
             items.add(UItem.asShadow(null));
@@ -922,6 +923,13 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             case 30:
                 Browser.openUrl(getParentActivity(), org.telegram.owpengram.OwpengramServers.SERVER_REPO_URL);
                 break;
+            case 31: {
+                LaunchActivity activity = getParentActivity() instanceof LaunchActivity ? (LaunchActivity) getParentActivity() : LaunchActivity.instance;
+                if (activity != null) {
+                    activity.checkAppUpdate(true, new Browser.Progress());
+                }
+                break;
+            }
 
             case 20:
                 ProfileActivity.sendLogs(getParentActivity(), false);

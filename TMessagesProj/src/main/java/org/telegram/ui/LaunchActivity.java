@@ -6496,12 +6496,21 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     @Override
     public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        checkUpdateFromIntent(intent);
         handleIntent(intent, true, false, false, null, true, true);
     }
 
     public void onNewIntent(Intent intent, Browser.Progress progress) {
         super.onNewIntent(intent);
+        checkUpdateFromIntent(intent);
         handleIntent(intent, true, false, false, progress, true, false);
+    }
+
+    private void checkUpdateFromIntent(Intent intent) {
+        if (intent != null && intent.getBooleanExtra(OwpengramUpdater.EXTRA_OPEN_UPDATE, false)) {
+            intent.removeExtra(OwpengramUpdater.EXTRA_OPEN_UPDATE);
+            checkAppUpdate(true, null);
+        }
     }
 
     @Override
@@ -7409,7 +7418,13 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         } else if (SharedConfig.pendingAppUpdate != null && SharedConfig.pendingAppUpdate.can_not_skip) {
             showUpdateActivity(UserConfig.selectedAccount, SharedConfig.pendingAppUpdate, true);
         }
-        checkAppUpdate(false, null);
+        if (getIntent() != null && getIntent().getBooleanExtra(OwpengramUpdater.EXTRA_OPEN_UPDATE, false)) {
+            getIntent().removeExtra(OwpengramUpdater.EXTRA_OPEN_UPDATE);
+            checkAppUpdate(true, null);
+        } else {
+            checkAppUpdate(false, null);
+        }
+        OwpengramUpdater.schedulePeriodicCheck();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             ApplicationLoader.canDrawOverlays = Settings.canDrawOverlays(this);

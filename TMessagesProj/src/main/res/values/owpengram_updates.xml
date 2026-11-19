@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="CheckForUpdates">Check for updates</string>
+    <string name="AppUpdateNotificationChannel">App updates</string>
+    <string name="AppUpdateNotificationTitle">OwpenGram update available</string>
+    <string name="AppUpdateNotificationText">Version %1$s is available. Tap to update.</string>
+    <string name="AppUpdateDownloadFailed">Download failed: %1$s</string>
+    <string name="AppUpdateInstallFailed">Could not open the installer.</string>
+</resources>

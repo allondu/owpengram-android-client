@@ -1,8 +1,17 @@
 package org.telegram.owpengram;
 
+import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.os.Build;
+
+import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -10,8 +19,11 @@ import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.FileLog;
+import org.telegram.messenger.LocaleController;
+import org.telegram.messenger.R;
 import org.telegram.messenger.Utilities;
 import org.telegram.tgnet.TLRPC;
+import org.telegram.ui.LaunchActivity;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -47,6 +59,11 @@ public final class OwpengramUpdater {
     private static final String KEY_LAST_CHECK = "last_check";
     private static final String KEY_PROMPTED_TAG = "prompted_tag";
     private static final String KEY_PROMPTED_AT = "prompted_at";
+    private static final String KEY_NOTIFIED_TAG = "notified_tag";
+    private static final String CHANNEL_ID = "owpengram_updates";
+    private static final int NOTIFICATION_ID = 0x0F1E;
+
+    public static final String EXTRA_OPEN_UPDATE = "owpengram_open_update";
 
     public interface Callback {
         /**
@@ -57,6 +74,8 @@ public final class OwpengramUpdater {
     }
 
     private static boolean checking;
+    private static boolean periodicScheduled;
+    private static volatile TLRPC.TL_help_appUpdate pendingUpdate;
 
     private OwpengramUpdater() {
     }
@@ -76,7 +95,11 @@ public final class OwpengramUpdater {
         final SharedPreferences prefs = ApplicationLoader.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         final long now = System.currentTimeMillis();
         if (!force && Math.abs(now - prefs.getLong(KEY_LAST_CHECK, 0)) < CHECK_INTERVAL_MS) {
-            AndroidUtilities.runOnUIThread(() -> callback.onResult(null, false));
+            final TLRPC.TL_help_appUpdate pending = pendingUpdate;
+            if (pending != null && !ApplicationLoader.mainInterfacePaused) {
+                markPrompted(prefs, pending.version);
+            }
+            AndroidUtilities.runOnUIThread(() -> callback.onResult(pending, false));
             return;
         }
         synchronized (OwpengramUpdater.class) {
@@ -102,14 +125,25 @@ public final class OwpengramUpdater {
                     checking = false;
                 }
             }
-            if (update != null && !force && alreadyPrompted(prefs, update.version)) {
+            final boolean prompted = update != null && !force && alreadyPrompted(prefs, update.version);
+            if (update != null && !prompted) {
+                if (ApplicationLoader.mainInterfacePaused) {
+                    // The app is in the background, so a dialog would be invisible.
+                    // Keep the update in memory, notify once if allowed and leave
+                    // the prompt unmarked: the next time the app comes to the
+                    // foreground the normal update dialog appears immediately.
+                    pendingUpdate = update;
+                    notifyUpdate(prefs, update);
+                } else {
+                    pendingUpdate = null;
+                    markPrompted(prefs, update.version);
+                }
+            }
+            if (prompted) {
                 update = null;
             }
-            if (update != null) {
-                prefs.edit()
-                        .putString(KEY_PROMPTED_TAG, update.version)
-                        .putLong(KEY_PROMPTED_AT, System.currentTimeMillis())
-                        .apply();
+            if (update == null && !failed) {
+                pendingUpdate = null;
             }
             final TLRPC.TL_help_appUpdate result = update;
             final boolean failedResult = failed;
@@ -121,6 +155,81 @@ public final class OwpengramUpdater {
     private static boolean alreadyPrompted(SharedPreferences prefs, String tag) {
         return tag.equals(prefs.getString(KEY_PROMPTED_TAG, null))
                 && Math.abs(System.currentTimeMillis() - prefs.getLong(KEY_PROMPTED_AT, 0)) < PROMPT_INTERVAL_MS;
+    }
+
+    private static void markPrompted(SharedPreferences prefs, String tag) {
+        prefs.edit()
+                .putString(KEY_PROMPTED_TAG, tag)
+                .putLong(KEY_PROMPTED_AT, System.currentTimeMillis())
+                .apply();
+    }
+
+    /** Keeps checking while the app process is alive, including its background service. */
+    public static void schedulePeriodicCheck() {
+        if (!enabled() || periodicScheduled) {
+            return;
+        }
+        periodicScheduled = true;
+        Utilities.globalQueue.postRunnable(new Runnable() {
+            @Override
+            public void run() {
+                check(false, (update, failed) -> {
+                });
+                Utilities.globalQueue.postRunnable(this, CHECK_INTERVAL_MS);
+            }
+        }, CHECK_INTERVAL_MS);
+    }
+
+    private static void notifyUpdate(SharedPreferences prefs, TLRPC.TL_help_appUpdate update) {
+        if (update.version == null || update.version.equals(prefs.getString(KEY_NOTIFIED_TAG, null))) {
+            return;
+        }
+        final Context context = ApplicationLoader.applicationContext;
+        if (context == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 33
+                && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        final NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null || Build.VERSION.SDK_INT >= 24 && !manager.areNotificationsEnabled()) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            manager.createNotificationChannel(new NotificationChannel(
+                    CHANNEL_ID,
+                    LocaleController.getString(R.string.AppUpdateNotificationChannel),
+                    NotificationManager.IMPORTANCE_DEFAULT
+            ));
+        }
+        final Intent intent = new Intent(context, LaunchActivity.class);
+        intent.putExtra(EXTRA_OPEN_UPDATE, true);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        int pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 23) {
+            pendingFlags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        final PendingIntent pendingIntent = PendingIntent.getActivity(context, NOTIFICATION_ID, intent, pendingFlags);
+        final Notification.Builder builder = Build.VERSION.SDK_INT >= 26
+                ? new Notification.Builder(context, CHANNEL_ID)
+                : new Notification.Builder(context);
+        builder.setSmallIcon(R.drawable.notification)
+                .setContentTitle(LocaleController.getString(R.string.AppUpdateNotificationTitle))
+                .setContentText(LocaleController.formatString("AppUpdateNotificationText", R.string.AppUpdateNotificationText, update.version))
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis());
+        if (Build.VERSION.SDK_INT < 26) {
+            builder.setPriority(Notification.PRIORITY_DEFAULT);
+        }
+        try {
+            manager.notify(NOTIFICATION_ID, builder.build());
+            prefs.edit().putString(KEY_NOTIFIED_TAG, update.version).apply();
+        } catch (Exception e) {
+            FileLog.e(e);
+        }
     }
 
     private static TLRPC.TL_help_appUpdate fetchNewerRelease() throws Exception {
