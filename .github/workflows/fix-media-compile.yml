@@ -1,0 +1,72 @@
+name: Fix media patch compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Fix the compile error and legacy media folder
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+
+          settings = Path("TMessagesProj/src/main/java/org/telegram/ui/DataSettingsActivity.java")
+          source = settings.read_text(encoding="utf-8")
+          old_call = "ImageLoader.getInstance(currentAccount).checkMediaPaths();"
+          new_call = "ImageLoader.getInstance().checkMediaPaths();"
+          if source.count(old_call) != 1:
+              sys.exit(f"settings anchor count {source.count(old_call)}")
+          settings.write_text(source.replace(old_call, new_call), encoding="utf-8")
+
+          loader = Path("TMessagesProj/src/main/java/org/telegram/messenger/ImageLoader.java")
+          source = loader.read_text(encoding="utf-8")
+          old_nomedia = (
+              "                if (SharedConfig.hideMediaFromGallery) {\n"
+              "                    AndroidUtilities.createEmptyFile(new File(telegramPath, \".nomedia\"));\n"
+              "                }"
+          )
+          new_nomedia = (
+              "                if (SharedConfig.hideMediaFromGallery) {\n"
+              "                    AndroidUtilities.createEmptyFile(new File(telegramPath, \".nomedia\"));\n"
+              "                    try {\n"
+              "                        File legacyPath = new File(Environment.getExternalStorageDirectory(), \"OwpenGram\");\n"
+              "                        if (legacyPath.isDirectory() && !legacyPath.getAbsolutePath().equals(telegramPath.getAbsolutePath())) {\n"
+              "                            AndroidUtilities.createEmptyFile(new File(legacyPath, \".nomedia\"));\n"
+              "                        }\n"
+              "                    } catch (Exception ignore) {\n"
+              "                    }\n"
+              "                }"
+          )
+          if source.count(old_nomedia) != 1:
+              sys.exit(f"loader anchor count {source.count(old_nomedia)}")
+          loader.write_text(source.replace(old_nomedia, new_nomedia), encoding="utf-8")
+          print("patched")
+          PY
+          grep -n "ImageLoader.getInstance().checkMediaPaths" TMessagesProj/src/main/java/org/telegram/ui/DataSettingsActivity.java
+          grep -n "legacyPath" TMessagesProj/src/main/java/org/telegram/messenger/ImageLoader.java
+
+      - name: Commit and push
+        run: |
+          git config user.name "Meralchen"
+          git config user.email "67538314+Meralchen@users.noreply.github.com"
+          git rm .github/workflows/fix-media-compile.yml
+          git add -A TMessagesProj/src/main
+          git commit -m "fix: refresh media paths without an account and hide the old gallery folder
+
+          ImageLoader is a process-wide singleton, so the settings toggle has to call
+          getInstance() without an account argument. Also drop a .nomedia file into the
+          legacy public OwpenGram folder so files downloaded before this switch stop
+          appearing in the phone gallery."
+          git push origin HEAD:main
