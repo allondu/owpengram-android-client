@@ -1,0 +1,281 @@
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java b/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+index a7e9de8db..ee6cadcb5 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java
+@@ -56,7 +56,9 @@ public class BuildVars {
+     static {
+         if (ApplicationLoader.applicationContext != null) {
+             SharedPreferences sharedPreferences = ApplicationLoader.applicationContext.getSharedPreferences("systemConfig", Context.MODE_PRIVATE);
+-            LOGS_ENABLED = DEBUG_VERSION || sharedPreferences.getBoolean("logsEnabled", DEBUG_VERSION);
++            // Debug builds log by default, but the explicit preference must win so
++            // the user can turn logging off and keep it off across restarts.
++            LOGS_ENABLED = sharedPreferences.getBoolean("logsEnabled", DEBUG_VERSION);
+         }
+         // The handler must be installed even when this class happens to be loaded before
+         // ApplicationLoader.onCreate() has stored the context: the old version skipped
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java b/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java
+index 65a2a5f75..166839841 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/FileLog.java
+@@ -616,8 +616,52 @@ public class FileLog {
+         }
+     }
+ 
++    /**
++     * Stops writing to the current log files and drops the file logger. A
++     * later log call starts fresh files, so this is safe to use both when
++     * logging is turned off and before stored logs are deleted.
++     */
++    public static void closeLogFiles() {
++        FileLog logger;
++        synchronized (FileLog.class) {
++            logger = Instance;
++            Instance = null;
++        }
++        if (logger == null) {
++            return;
++        }
++        if (logger.logQueue != null) {
++            logger.logQueue.postRunnable(logger::closeWriters);
++        } else {
++            logger.closeWriters();
++        }
++    }
++
++    private void closeWriters() {
++        try {
++            if (streamWriter != null) {
++                streamWriter.flush();
++                streamWriter.close();
++            }
++        } catch (Throwable ignore) {
++        } finally {
++            streamWriter = null;
++        }
++        try {
++            if (tlStreamWriter != null) {
++                tlStreamWriter.flush();
++                tlStreamWriter.close();
++            }
++        } catch (Throwable ignore) {
++        } finally {
++            tlStreamWriter = null;
++        }
++    }
++
+     public static void cleanupLogs() {
+-        ensureInitied();
++        if (BuildVars.LOGS_ENABLED) {
++            ensureInitied();
++        }
+         File dir = AndroidUtilities.getLogsDir();
+         if (dir == null) {
+             return;
+diff --git a/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java b/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java
+new file mode 100644
+index 000000000..76998e682
+--- /dev/null
++++ b/TMessagesProj/src/main/java/org/telegram/owpengram/OwpengramLogs.java
+@@ -0,0 +1,118 @@
++package org.telegram.owpengram;
++
++import android.content.Context;
++import android.content.SharedPreferences;
++
++import org.telegram.messenger.AndroidUtilities;
++import org.telegram.messenger.ApplicationLoader;
++import org.telegram.messenger.BuildVars;
++import org.telegram.messenger.FileLog;
++import org.telegram.messenger.Utilities;
++
++import java.io.File;
++import java.util.LinkedHashSet;
++import java.util.Set;
++
++/**
++ * Controls OwpenGram's diagnostic file logging. Logs are written next to the
++ * media cache and can grow without an upper limit, so the user can turn the
++ * writes off and delete what is already stored.
++ */
++public final class OwpengramLogs {
++
++    private static final String PREFS_NAME = "systemConfig";
++    private static final String KEY_LOGS_ENABLED = "logsEnabled";
++
++    private OwpengramLogs() {
++    }
++
++    public static boolean isEnabled() {
++        return BuildVars.LOGS_ENABLED;
++    }
++
++    public static void setEnabled(boolean enabled) {
++        BuildVars.LOGS_ENABLED = enabled;
++        getPrefs().edit().putBoolean(KEY_LOGS_ENABLED, enabled).commit();
++        if (enabled) {
++            FileLog.ensureInitied();
++            FileLog.d("file logging enabled");
++        } else {
++            FileLog.closeLogFiles();
++        }
++    }
++
++    /**
++     * Removes all stored log files. Sizes are computed before deleting, and
++     * the callback runs on the UI thread with the number of bytes freed.
++     */
++    public static void deleteLogs(Utilities.Callback<Long> callback) {
++        // Close our own writers first, otherwise open file descriptors keep
++        // the deleted files' blocks allocated until the process dies.
++        FileLog.closeLogFiles();
++        Utilities.cacheClearQueue.postRunnable(() -> {
++            long size = 0;
++            for (File dir : logDirs()) {
++                size += directorySize(dir);
++                deleteContents(dir);
++            }
++            final long deleted = size;
++            if (callback != null) {
++                AndroidUtilities.runOnUIThread(() -> callback.run(deleted));
++            }
++        });
++    }
++
++    private static SharedPreferences getPrefs() {
++        return ApplicationLoader.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
++    }
++
++    private static Set<File> logDirs() {
++        Set<File> dirs = new LinkedHashSet<>();
++        File appLogs = AndroidUtilities.getLogsDir();
++        if (appLogs != null) {
++            dirs.add(appLogs);
++        }
++        Context context = ApplicationLoader.applicationContext;
++        if (context != null) {
++            // Native call logging uses its own directory and is not counted by
++            // the app's storage screen.
++            dirs.add(new File(context.getCacheDir(), "voip_logs"));
++        }
++        return dirs;
++    }
++
++    private static long directorySize(File file) {
++        if (file == null || !file.exists()) {
++            return 0;
++        }
++        if (file.isFile()) {
++            return file.length();
++        }
++        File[] children = file.listFiles();
++        if (children == null) {
++            return 0;
++        }
++        long size = 0;
++        for (File child : children) {
++            size += directorySize(child);
++        }
++        return size;
++    }
++
++    private static void deleteContents(File file) {
++        if (file == null) {
++            return;
++        }
++        if (file.isDirectory()) {
++            File[] children = file.listFiles();
++            if (children != null) {
++                for (File child : children) {
++                    deleteContents(child);
++                }
++            }
++        } else {
++            //noinspection ResultOfMethodCallIgnored
++            file.delete();
++        }
++    }
++}
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+index e7d16d60a..9fd3f9139 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+@@ -789,6 +789,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+         }
+         items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, "OwpenGram"));
+         items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_devices, getString(R.string.CheckForUpdates)));
++        boolean loggingEnabled = org.telegram.owpengram.OwpengramLogs.isEnabled();
++        items.add(SettingCell.Factory.of(32, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_data, getString(R.string.OwpengramLogging), getString(R.string.OwpengramLoggingSubtitle), getString(loggingEnabled ? R.string.OwpengramLoggingOn : R.string.OwpengramLoggingOff)));
+ 
+         if (SharedSettings.experimentalSettingsAllowed.get()) {
+             items.add(UItem.asShadow(null));
+@@ -930,6 +932,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+                 }
+                 break;
+             }
++            case 32:
++                showLoggingDialog();
++                break;
+ 
+             case 20:
+                 ProfileActivity.sendLogs(getParentActivity(), false);
+@@ -959,6 +964,37 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+         }
+     }
+ 
++    private void showLoggingDialog() {
++        if (getParentActivity() == null) {
++            return;
++        }
++        final boolean enabled = org.telegram.owpengram.OwpengramLogs.isEnabled();
++        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
++        builder.setTitle(getString(R.string.OwpengramLoggingTitle));
++        builder.setMessage(getString(enabled ? R.string.OwpengramLoggingMessageOn : R.string.OwpengramLoggingMessageOff));
++        builder.setPositiveButton(getString(enabled ? R.string.OwpengramLoggingTurnOff : R.string.OwpengramLoggingTurnOn), (dialog, which) -> {
++            org.telegram.owpengram.OwpengramLogs.setEnabled(!enabled);
++            if (listView != null && listView.adapter != null) {
++                listView.adapter.update(true);
++            }
++            BulletinFactory.of(this).createSimpleBulletin(R.raw.info, getString(!enabled ? R.string.OwpengramLoggingTurnedOn : R.string.OwpengramLoggingTurnedOff)).show();
++        });
++        builder.setNeutralButton(getString(R.string.OwpengramLoggingDelete), (dialog, which) -> org.telegram.owpengram.OwpengramLogs.deleteLogs(deleted -> {
++            if (getParentActivity() == null) {
++                return;
++            }
++            if (listView != null && listView.adapter != null) {
++                listView.adapter.update(true);
++            }
++            CharSequence text = deleted > 0
++                ? formatString(R.string.OwpengramLoggingDeletedSize, AndroidUtilities.formatFileSize(deleted))
++                : getString(R.string.OwpengramLoggingNothingToDelete);
++            BulletinFactory.of(this).createSimpleBulletin(R.raw.ic_delete, text).show();
++        }));
++        builder.setNegativeButton(getString(R.string.Cancel), null);
++        showDialog(builder.create());
++    }
++
+     private String serverLabel(int account) {
+         String name = org.telegram.owpengram.OwpengramServers.serverNameForAccount(account);
+         return name != null ? name : getString(R.string.AppName);
+diff --git a/TMessagesProj/src/main/res/values/owpengram_logs.xml b/TMessagesProj/src/main/res/values/owpengram_logs.xml
+new file mode 100644
+index 000000000..68b4a9e2f
+--- /dev/null
++++ b/TMessagesProj/src/main/res/values/owpengram_logs.xml
+@@ -0,0 +1,17 @@
++<?xml version="1.0" encoding="utf-8"?>
++<resources>
++    <string name="OwpengramLogging">Logging</string>
++    <string name="OwpengramLoggingSubtitle">Diagnostic logs — tap to change or delete</string>
++    <string name="OwpengramLoggingOn">On</string>
++    <string name="OwpengramLoggingOff">Off</string>
++    <string name="OwpengramLoggingTitle">Diagnostic logs</string>
++    <string name="OwpengramLoggingMessageOn">Logging is on. OwpenGram writes diagnostic logs that can grow over time and take up storage.\n\nTurn logging off to stop new logs, or delete the logs already stored.</string>
++    <string name="OwpengramLoggingMessageOff">Logging is off. OwpenGram is not writing new diagnostic logs.\n\nYou can still delete the logs left from before.</string>
++    <string name="OwpengramLoggingTurnOff">Turn off</string>
++    <string name="OwpengramLoggingTurnOn">Turn on</string>
++    <string name="OwpengramLoggingTurnedOff">Logging turned off</string>
++    <string name="OwpengramLoggingTurnedOn">Logging turned on</string>
++    <string name="OwpengramLoggingDelete">Delete logs</string>
++    <string name="OwpengramLoggingDeletedSize">Deleted %1$s of logs</string>
++    <string name="OwpengramLoggingNothingToDelete">No stored logs to delete</string>
++</resources>
