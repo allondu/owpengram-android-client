@@ -1,6 +1,7 @@
 name: Apply encRgraM identity
 
 on:
+  push:
   workflow_dispatch:
 
 permissions:
