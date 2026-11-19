@@ -303,7 +303,7 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
         }
 
         public void setForeground(int res) {
-            foreground = ContextCompat.getDrawable(getContext(), res);
+            foreground = res == 0 ? null : ContextCompat.getDrawable(getContext(), res);
             invalidate();
         }
 
@@ -329,7 +329,6 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
         public void draw(Canvas canvas) {
             canvas.save();
             canvas.clipPath(path);
-            canvas.scale(1f + backgroundOuterPadding / (float) getWidth(), 1f + backgroundOuterPadding / (float) getHeight(), getWidth() / 2f, getHeight() / 2f);
             super.draw(canvas);
             canvas.restore();
 

@@ -389,6 +389,9 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     public static LaunchActivity instance;
 
+    private long pendingSecretChatUserId;
+    private Runnable pendingSecretChatTimeout;
+
     public boolean voipLaunchedInBackground;
 
     public WindowAnimatedInsetsProvider getRootAnimatedInsetsListener() {
@@ -1474,10 +1477,16 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
             observersGroup = null;
         }
 
+        pendingSecretChatUserId = 0;
+        if (pendingSecretChatTimeout != null) {
+            AndroidUtilities.cancelRunOnUIThread(pendingSecretChatTimeout);
+            pendingSecretChatTimeout = null;
+        }
         currentAccount = UserConfig.selectedAccount;
         observersGroup = NotificationCenter.getInstance(currentAccount)
             .createObserversGroup(this)
             .add(NotificationCenter.openBoostForUsersDialog)
+            .add(NotificationCenter.encryptedChatCreated)
             .add(NotificationCenter.appDidLogout)
             .add(NotificationCenter.mainUserInfoChanged)
             .add(NotificationCenter.attachMenuBotsDidLoad)
@@ -6970,6 +6979,59 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
         ).setDuration(Bulletin.DURATION_PROLONG).show();
     }
 
+    public static void showSecretChatOnlyBlocked() {
+        LaunchActivity activity = instance;
+        if (activity == null) {
+            return;
+        }
+        AndroidUtilities.runOnUIThread(() -> {
+            if (activity.isFinishing()) {
+                return;
+            }
+            AlertDialog.Builder builder = new AlertDialog.Builder(activity);
+            builder.setTitle(LocaleController.getString(R.string.SecretChatsOnly));
+            builder.setMessage(LocaleController.getString(R.string.SecretChatOnlyBlocked));
+            builder.setPositiveButton(LocaleController.getString(R.string.OK), null);
+            AlertDialog alert = builder.create();
+            alert.setCanceledOnTouchOutside(true);
+            BaseFragment lastFragment = getLastFragment();
+            if (lastFragment != null) {
+                lastFragment.showDialog(alert);
+            } else {
+                alert.show();
+            }
+        });
+    }
+
+    public void requestSecretChat(long userId) {
+        if (userId == 0 || pendingSecretChatUserId != 0 || SharedConfig.isSecretChatsOnly() == false) {
+            return;
+        }
+        TLRPC.User user = MessagesController.getInstance(currentAccount).getUser(userId);
+        if (user == null || user.bot || UserObject.isUserSelf(user)) {
+            showSecretChatOnlyBlocked();
+            return;
+        }
+        pendingSecretChatUserId = userId;
+        if (pendingSecretChatTimeout != null) {
+            AndroidUtilities.cancelRunOnUIThread(pendingSecretChatTimeout);
+        }
+        pendingSecretChatTimeout = () -> pendingSecretChatUserId = 0;
+        AndroidUtilities.runOnUIThread(pendingSecretChatTimeout, 60_000);
+        AndroidUtilities.runOnUIThread(() -> {
+            if (pendingSecretChatUserId != userId || isFinishing()) {
+                return;
+            }
+            BaseFragment lastFragment = getLastFragment();
+            Activity activity = lastFragment != null ? lastFragment.getParentActivity() : this;
+            if (activity == null) {
+                pendingSecretChatUserId = 0;
+                return;
+            }
+            AccountInstance.getInstance(currentAccount).getSecretChatHelper().startSecretChat(activity, user);
+        });
+    }
+
     public void presentFragment(INavigationLayout.NavigationParams params) {
         getActionBarLayout().presentFragment(params);
     }
@@ -7560,7 +7622,21 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     @Override
     @SuppressWarnings("unchecked")
     public void didReceivedNotification(int id, final int account, Object... args) {
-        if (id == NotificationCenter.appDidLogout) {
+        if (id == NotificationCenter.encryptedChatCreated) {
+            if (pendingSecretChatUserId != 0 && args.length > 0) {
+                TLRPC.EncryptedChat encryptedChat = (TLRPC.EncryptedChat) args[0];
+                if (encryptedChat.user_id == pendingSecretChatUserId) {
+                    pendingSecretChatUserId = 0;
+                    if (pendingSecretChatTimeout != null) {
+                        AndroidUtilities.cancelRunOnUIThread(pendingSecretChatTimeout);
+                        pendingSecretChatTimeout = null;
+                    }
+                    Bundle chatArgs = new Bundle();
+                    chatArgs.putInt("enc_id", encryptedChat.id);
+                    presentFragment(new ChatActivity(chatArgs));
+                }
+            }
+        } else if (id == NotificationCenter.appDidLogout) {
             switchToAvailableAccountOrLogout();
         } else if (id == NotificationCenter.openBoostForUsersDialog) {
             long dialogId = (long) args[0];

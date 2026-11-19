@@ -8,6 +8,8 @@ import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.R;
 
 public class LauncherIconController {
+    private static final String[] REMOVED_ICON_KEYS = {"TurboIcon", "NoxIcon"};
+
     public static void tryFixLauncherIconIfNeeded() {
         for (LauncherIcon icon : LauncherIcon.values()) {
             if (isEnabled(icon)) {
@@ -16,6 +18,15 @@ public class LauncherIconController {
         }
 
         setIcon(LauncherIcon.DEFAULT);
+    }
+
+    public static LauncherIcon getCurrentIcon() {
+        for (LauncherIcon icon : LauncherIcon.values()) {
+            if (isEnabled(icon)) {
+                return icon;
+            }
+        }
+        return LauncherIcon.DEFAULT;
     }
 
     public static boolean isEnabled(LauncherIcon icon) {
@@ -31,15 +42,20 @@ public class LauncherIconController {
             pm.setComponentEnabledSetting(i.getComponentName(ctx), i == icon ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED :
                     PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
         }
+        for (String key : REMOVED_ICON_KEYS) {
+            try {
+                pm.setComponentEnabledSetting(new ComponentName(ctx.getPackageName(), "org.telegram.messenger." + key),
+                        PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP);
+            } catch (Exception ignore) {
+            }
+        }
     }
 
     public enum LauncherIcon {
-        DEFAULT("DefaultIcon", R.drawable.icon_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconDefault),
-        VINTAGE("VintageIcon", R.drawable.icon_6_background_sa, R.mipmap.icon_6_foreground_sa, R.string.AppIconVintage),
-        AQUA("AquaIcon", R.drawable.icon_4_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconAqua),
-        PREMIUM("PremiumIcon", R.drawable.icon_3_background_sa, R.mipmap.icon_3_foreground_sa, R.string.AppIconPremium, true),
-        TURBO("TurboIcon", R.drawable.icon_5_background_sa, R.mipmap.icon_5_foreground_sa, R.string.AppIconTurbo, true),
-        NOX("NoxIcon", R.mipmap.icon_2_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconNox, true);
+        DEFAULT("DefaultIcon", R.mipmap.app_icon_light, 0, R.string.AppIconDefault),
+        DARK("VintageIcon", R.mipmap.app_icon_dark, 0, R.string.AppIconVintage),
+        TRIAD_LIGHT("AquaIcon", R.mipmap.app_icon_triad_light, 0, R.string.AppIconAqua),
+        TRIAD_DARK("PremiumIcon", R.mipmap.app_icon_triad_dark, 0, R.string.AppIconPremium);
 
         public final String key;
         public final int background;

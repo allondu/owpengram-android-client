@@ -81,7 +81,7 @@ public class NotificationsService extends Service {
         NotificationsController.checkPushServiceNotificationsChannel();
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, NotificationsController.PUSH_SERVICE_NOTIFICATIONS_CHANNEL)
                 .setSmallIcon(R.drawable.notification)
-                .setContentTitle("OwpenGram")
+                .setContentTitle(SharedConfig.getAppDisplayName())
                 .setContentText("Keeping the connection alive")
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_MIN)

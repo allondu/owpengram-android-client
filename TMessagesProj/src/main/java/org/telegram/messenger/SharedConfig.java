@@ -337,6 +337,10 @@ public class SharedConfig {
 
     public static boolean hasEmailLogin;
 
+    // encRgraM demo privacy and branding options.
+    public static boolean secretChatsOnly;
+    private static String customAppDisplayName;
+
     @PerformanceClass
     private static int devicePerformanceClass;
     @PerformanceClass
@@ -597,6 +601,8 @@ public class SharedConfig {
 
             preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
             hideMediaFromGallery = preferences.getBoolean("hide_media_from_gallery", true);
+            secretChatsOnly = preferences.getBoolean("secretChatsOnly", false);
+            customAppDisplayName = preferences.getString("customAppDisplayName", "");
             SaveToGallerySettingsHelper.load(preferences);
             mapPreviewType = preferences.getInt("mapPreviewType", 2);
             searchEngineType = preferences.getInt("searchEngineType", 0);
@@ -1039,6 +1045,32 @@ public class SharedConfig {
         SharedPreferences.Editor editor = preferences.edit();
         editor.putInt("keep_media", keepMedia);
         editor.apply();
+    }
+
+    public static boolean isSecretChatsOnly() {
+        return secretChatsOnly;
+    }
+
+    public static void setSecretChatsOnly(boolean enabled) {
+        secretChatsOnly = enabled;
+        SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+        preferences.edit().putBoolean("secretChatsOnly", enabled).apply();
+    }
+
+    public static String getAppDisplayName() {
+        if (!TextUtils.isEmpty(customAppDisplayName)) {
+            return customAppDisplayName;
+        }
+        if (ApplicationLoader.applicationContext != null) {
+            return ApplicationLoader.applicationContext.getString(R.string.AppName);
+        }
+        return "encRgraM";
+    }
+
+    public static void setAppDisplayName(String name) {
+        customAppDisplayName = name == null ? "" : name.trim();
+        SharedPreferences preferences = MessagesController.getGlobalMainSettings();
+        preferences.edit().putString("customAppDisplayName", customAppDisplayName).apply();
     }
 
     public static void toggleUpdateStickersOrderOnSend() {

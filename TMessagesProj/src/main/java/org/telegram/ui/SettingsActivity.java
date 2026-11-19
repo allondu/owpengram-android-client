@@ -776,6 +776,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         if (items.get(items.size() - 1).viewType != UniversalAdapter.VIEW_TYPE_SHADOW)
             items.add(UItem.asShadow(null));
 
+        items.add(UItem.asHeader(getString(R.string.PrivacyIdentity)));
+        items.add(SettingCell.Factory.of(40, 0xFF55CA47, 0xFF27B434, R.drawable.settings_privacy, getString(R.string.SecretChatsOnly), getString(R.string.SecretChatsOnlyInfo), SharedConfig.isSecretChatsOnly() ? "On" : "Off"));
+        items.add(SettingCell.Factory.of(41, 0xFFF45255, 0xFFDF3955, R.drawable.settings_data, getString(R.string.PanicWipe), getString(R.string.PanicWipeInfo)));
+        items.add(SettingCell.Factory.of(42, 0xFF1BA4ED, 0xFF1488E1, R.drawable.settings_account, getString(R.string.AppIdentity), getString(R.string.AppIdentityInfo), SharedConfig.getAppDisplayName()));
+        items.add(UItem.asShadow(null));
+
         items.add(UItem.asHeader(getString(R.string.SettingsHelp)));
         // Ask a Question / Telegram FAQ / Telegram Features / Privacy Policy are
         // Telegram-specific. Show them only when the active account is on the
@@ -787,7 +793,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             items.add(SettingCell.Factory.of(23, 0xFFC46EF4, 0xFF9F55DF, R.drawable.settings_features, getString(R.string.TelegramFeatures)));
             items.add(SettingCell.Factory.of(19, 0xFF55CA47, 0xFF27B434, R.drawable.settings_policy, getString(R.string.PrivacyPolicy)));
         }
-        items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, "OwpenGram"));
+        items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, SharedConfig.getAppDisplayName()));
         items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_devices, getString(R.string.CheckForUpdates)));
         boolean loggingEnabled = org.telegram.owpengram.OwpengramLogs.isEnabled();
         items.add(SettingCell.Factory.of(32, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_data, getString(R.string.OwpengramLogging), getString(R.string.OwpengramLoggingSubtitle), getString(loggingEnabled ? R.string.OwpengramLoggingOn : R.string.OwpengramLoggingOff)));
@@ -808,6 +814,124 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         }
 
         items.add(UItem.asCustomShadow(versionView));
+    }
+
+    private void toggleSecretChatsOnly() {
+        Activity activity = getParentActivity();
+        if (activity == null) {
+            return;
+        }
+        if (SharedConfig.isSecretChatsOnly()) {
+            SharedConfig.setSecretChatsOnly(false);
+            if (listView != null) {
+                listView.adapter.update(true);
+            }
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity, resourceProvider);
+        builder.setTitle(getString(R.string.SecretChatsOnlyWarningTitle));
+        builder.setMessage(getString(R.string.SecretChatsOnlyWarning));
+        builder.setPositiveButton(getString(R.string.Enable), (dialog, which) -> {
+            SharedConfig.setSecretChatsOnly(true);
+            NotificationCenter.getInstance(currentAccount).postNotificationName(NotificationCenter.closeChats);
+            if (listView != null) {
+                listView.adapter.update(true);
+            }
+        });
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        showDialog(builder.create());
+    }
+
+    private void showAppIdentityDialog() {
+        Activity activity = getParentActivity();
+        if (activity == null) {
+            return;
+        }
+        LinearLayout content = new LinearLayout(activity);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(10), dp(22), 0);
+
+        TextView nameLabel = new TextView(activity);
+        nameLabel.setText(getString(R.string.AppNameLabel));
+        nameLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        nameLabel.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourceProvider));
+        content.addView(nameLabel, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        EditText nameInput = new EditText(activity);
+        nameInput.setSingleLine(true);
+        nameInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        nameInput.setText(SharedConfig.getAppDisplayName());
+        nameInput.setHint(getString(R.string.AppNameHint));
+        nameInput.setHintTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteHintText, resourceProvider));
+        nameInput.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourceProvider));
+        content.addView(nameInput, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 4, 0, 12));
+
+        TextView logoLabel = new TextView(activity);
+        logoLabel.setText(getString(R.string.AppLogoLabel));
+        logoLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14);
+        logoLabel.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourceProvider));
+        content.addView(logoLabel, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT));
+
+        final LauncherIconController.LauncherIcon[] selected = {LauncherIconController.getCurrentIcon()};
+        final LauncherIconController.LauncherIcon[] icons = LauncherIconController.LauncherIcon.values();
+        final ImageView[] logoImages = new ImageView[icons.length];
+        LinearLayout logoRow = new LinearLayout(activity);
+        logoRow.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < icons.length; i++) {
+            final LauncherIconController.LauncherIcon icon = icons[i];
+            LinearLayout item = new LinearLayout(activity);
+            item.setOrientation(LinearLayout.VERTICAL);
+            item.setGravity(Gravity.CENTER_HORIZONTAL);
+            ImageView image = new ImageView(activity);
+            image.setImageResource(icon.background);
+            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setPadding(dp(3), dp(3), dp(3), dp(3));
+            logoImages[i] = image;
+            item.addView(image, new LinearLayout.LayoutParams(dp(58), dp(58)));
+            TextView title = new TextView(activity);
+            title.setText(getString(icon.title));
+            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 10);
+            title.setSingleLine(true);
+            title.setGravity(Gravity.CENTER);
+            title.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText, resourceProvider));
+            item.addView(title, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL, 0, 3, 0, 0));
+            item.setOnClickListener(v -> {
+                selected[0] = icon;
+                for (int j = 0; j < logoImages.length; j++) {
+                    updateLogoSelection(logoImages[j], icons[j] == selected[0]);
+                }
+            });
+            logoRow.addView(item, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            updateLogoSelection(image, icon == selected[0]);
+        }
+        content.addView(logoRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 6, 0, 0));
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(activity, resourceProvider);
+        builder.setTitle(getString(R.string.AppIdentity));
+        builder.setView(content);
+        builder.setPositiveButton(getString(R.string.Save), (dialog, which) -> {
+            String name = nameInput.getText().toString().trim();
+            if (TextUtils.isEmpty(name)) {
+                name = getString(R.string.AppName);
+            }
+            SharedConfig.setAppDisplayName(name);
+            LauncherIconController.setIcon(selected[0]);
+            if (listView != null) {
+                listView.adapter.update(true);
+            }
+            Toast.makeText(activity, getString(R.string.AppIdentitySaved), Toast.LENGTH_SHORT).show();
+        });
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        showDialog(builder.create());
+    }
+
+    private void updateLogoSelection(ImageView view, boolean selected) {
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(12));
+        background.setColor(0x00000000);
+        int hint = Theme.getColor(Theme.key_windowBackgroundWhiteHintText, resourceProvider);
+        background.setStroke(dp(2), selected ? Theme.getColor(Theme.key_windowBackgroundWhiteValueText, resourceProvider) : (hint & 0x00FFFFFF) | 0x55000000);
+        view.setBackground(background);
     }
 
     private void presentSettingFragment(BaseFragment fragment) {
@@ -934,6 +1058,15 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             }
             case 32:
                 showLoggingDialog();
+                break;
+            case 40:
+                toggleSecretChatsOnly();
+                break;
+            case 41:
+                Toast.makeText(getParentActivity(), getString(R.string.PanicWipeToast), Toast.LENGTH_LONG).show();
+                break;
+            case 42:
+                showAppIdentityDialog();
                 break;
 
             case 20:
