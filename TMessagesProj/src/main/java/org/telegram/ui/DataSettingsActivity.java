@@ -105,6 +105,7 @@ public class DataSettingsActivity extends BaseFragment {
     private int clearDraftsRow;
     private int clearDraftsSectionRow;
     private int saveToGallerySectionRow;
+    private int saveToGalleryHideRow;
     @Keep
     private int saveToGalleryPeerRow;
     @Keep
@@ -169,6 +170,7 @@ public class DataSettingsActivity extends BaseFragment {
         mediaDownloadSection2Row = rowCount++;
 
         saveToGallerySectionRow = rowCount++;
+        saveToGalleryHideRow = rowCount++;
         saveToGalleryPeerRow = rowCount++;
         saveToGalleryGroupsRow = rowCount++;
         saveToGalleryChannelsRow = rowCount++;
@@ -299,7 +301,15 @@ public class DataSettingsActivity extends BaseFragment {
         frameLayout.addView(listView, LayoutHelper.createFrame(LayoutHelper.MATCH_PARENT, LayoutHelper.MATCH_PARENT, Gravity.TOP | Gravity.LEFT));
         listView.setAdapter(listAdapter);
         listView.setOnItemClickListener((view, position, x, y) -> {
-            if (position == saveToGalleryGroupsRow || position == saveToGalleryChannelsRow || position == saveToGalleryPeerRow) {
+            if (position == saveToGalleryHideRow) {
+                if (getParentActivity() == null || !view.isEnabled()) {
+                    return;
+                }
+                SharedConfig.hideMediaFromGallery = !SharedConfig.hideMediaFromGallery;
+                SharedConfig.saveConfig();
+                ((TextCheckCell) view).setChecked(SharedConfig.hideMediaFromGallery);
+                ImageLoader.getInstance(currentAccount).checkMediaPaths();
+            } else if (position == saveToGalleryGroupsRow || position == saveToGalleryChannelsRow || position == saveToGalleryPeerRow) {
                 int flag;
                 if (position == saveToGalleryGroupsRow) {
                     flag = SharedConfig.SAVE_TO_GALLERY_FLAG_GROUP;
@@ -750,7 +760,9 @@ public class DataSettingsActivity extends BaseFragment {
                 }
                 case 3: {
                     TextCheckCell checkCell = (TextCheckCell) holder.itemView;
-                    if (position == enableStreamRow) {
+                    if (position == saveToGalleryHideRow) {
+                        checkCell.setTextAndCheck(LocaleController.getString(R.string.HideFromGallery), SharedConfig.hideMediaFromGallery, true);
+                    } else if (position == enableStreamRow) {
                         checkCell.setTextAndCheck(LocaleController.getString(R.string.EnableStreaming), SharedConfig.streamMedia, enableAllStreamRow != -1);
                     } else if (position == enableCacheStreamRow) {
                         //checkCell.setTextAndCheck(LocaleController.getString(R.string.CacheStreamFile), SharedConfig.saveStreamMedia, true);
@@ -930,7 +942,7 @@ public class DataSettingsActivity extends BaseFragment {
                 return 0;
             } else if (position == mediaDownloadSectionRow || position == streamSectionRow || position == callsSectionRow || position == usageSectionRow || position == proxySectionRow || position == autoplayHeaderRow || position == saveToGallerySectionRow) {
                 return 2;
-            } else if (position == enableCacheStreamRow || position == enableStreamRow || position == enableAllStreamRow || position == enableMkvRow || position == autoplayGifsRow || position == autoplayVideoRow) {
+            } else if (position == saveToGalleryHideRow || position == enableCacheStreamRow || position == enableStreamRow || position == enableAllStreamRow || position == enableMkvRow || position == autoplayGifsRow || position == autoplayVideoRow) {
                 return 3;
             } else if (position == enableAllStreamInfoRow) {
                 return 4;

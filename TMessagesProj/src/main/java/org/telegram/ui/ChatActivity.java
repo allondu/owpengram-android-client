@@ -41929,7 +41929,7 @@ public class ChatActivity extends BaseFragment implements
                     }
                 }
                 boolean handled = false;
-                if (message.canPreviewDocument()) {
+                if (message.canPreviewDocument() || MessageObject.isVideoFileDocument(message.getDocument())) {
                     PhotoViewer.getInstance().setParentActivity(ChatActivity.this, themeDelegate);
                     PhotoViewer.getInstance().openPhoto(message, ChatActivity.this, message.type != 0 ? dialog_id : 0, message.type != 0 ? mergeDialogId : 0, message.type != 0 ? getTopicId() : 0, photoViewerProvider);
                     handled = true;

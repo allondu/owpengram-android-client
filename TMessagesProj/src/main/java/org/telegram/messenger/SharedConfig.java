@@ -209,6 +209,7 @@ public class SharedConfig {
     public final static int SAVE_TO_GALLERY_FLAG_PEER = 1;
     public final static int SAVE_TO_GALLERY_FLAG_GROUP = 2;
     public final static int SAVE_TO_GALLERY_FLAG_CHANNELS = 4;
+    public static boolean hideMediaFromGallery = true;
 
     @PushListenerController.PushType
     public static int pushType = PushListenerController.PUSH_TYPE_FIREBASE;
@@ -495,6 +496,7 @@ public class SharedConfig {
                 editor.putBoolean("hasEmailLogin", hasEmailLogin);
                 editor.putBoolean("floatingDebugActive", isFloatingDebugActive);
                 editor.putBoolean("record_via_sco", recordViaSco);
+                editor.putBoolean("hide_media_from_gallery", hideMediaFromGallery);
                 editor.apply();
             } catch (Exception e) {
                 FileLog.e(e);
@@ -594,6 +596,7 @@ public class SharedConfig {
             }
 
             preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
+            hideMediaFromGallery = preferences.getBoolean("hide_media_from_gallery", true);
             SaveToGallerySettingsHelper.load(preferences);
             mapPreviewType = preferences.getInt("mapPreviewType", 2);
             searchEngineType = preferences.getInt("searchEngineType", 0);

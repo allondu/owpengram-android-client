@@ -59,6 +59,9 @@ public class SaveToGallerySettingsHelper {
     }
 
     public static boolean needSave(int flag, FilePathDatabase.FileMeta metaData, MessageObject messageObject, int currentAccount) {
+        if (SharedConfig.hideMediaFromGallery) {
+            return false;
+        }
         SharedSettings settings;
         if (flag == SharedConfig.SAVE_TO_GALLERY_FLAG_PEER) {
             settings = user;

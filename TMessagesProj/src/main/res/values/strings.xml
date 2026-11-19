@@ -2580,6 +2580,7 @@
     <string name="RaiseToListen">Raise to Listen</string>
     <string name="RaiseToListenInfo">Switch sound to the earpiece by raising phone to your ear</string>
     <string name="SaveToGallerySettings">Save to Gallery</string>
+    <string name="HideFromGallery">Keep out of gallery</string>
     <string name="SoundMuted">Sound muted</string>
     <string name="EditName">Edit Name</string>
     <string name="ProfileColorEdit">Change profile color</string>

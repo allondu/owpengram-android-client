@@ -10461,6 +10461,40 @@ public class MessageObject {
         return isVideo && !isAnimated;
     }
 
+    public static boolean isVideoFileDocument(TLRPC.Document document) {
+        if (document == null) {
+            return false;
+        }
+        boolean isVideo = document.mime_type != null && document.mime_type.toLowerCase().startsWith("video/");
+        if (!isVideo) {
+            String name = FileLoader.getDocumentFileName(document);
+            if (name != null) {
+                int idx = name.lastIndexOf('.');
+                if (idx >= 0) {
+                    String ext = name.substring(idx + 1).toLowerCase();
+                    switch (ext) {
+                        case "mp4":
+                        case "m4v":
+                        case "mkv":
+                        case "webm":
+                        case "mov":
+                        case "avi":
+                        case "3gp":
+                        case "ts":
+                        case "flv":
+                        case "wmv":
+                            isVideo = true;
+                            break;
+                    }
+                }
+            }
+        }
+        if (!isVideo) {
+            return false;
+        }
+        return !isGifDocument(document) && !isRoundVideoDocument(document) && !isAnyKindOfStickerOrEmoji(document);
+    }
+
     public static boolean isV(String ext) {
         if (ext == null) return true;
         switch (ext.toLowerCase().hashCode()) {

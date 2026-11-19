@@ -2436,7 +2436,13 @@ public class ImageLoader {
         try {
             if (Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState())) {
                 File path = Environment.getExternalStorageDirectory();
-                if (!TextUtils.isEmpty(SharedConfig.storageCacheDir)) {
+                if (SharedConfig.hideMediaFromGallery) {
+                    File appFilesDir = ApplicationLoader.applicationContext.getExternalFilesDir(null);
+                    if (appFilesDir != null) {
+                        path = appFilesDir;
+                    }
+                }
+                if (!SharedConfig.hideMediaFromGallery && !TextUtils.isEmpty(SharedConfig.storageCacheDir)) {
                     ArrayList<File> dirs = AndroidUtilities.getRootDirs();
                     if (dirs != null) {
                         for (int a = 0, N = dirs.size(); a < N; a++) {
@@ -2488,6 +2494,9 @@ public class ImageLoader {
                     telegramPath = new File(path, "OwpenGram");
                 }
                 telegramPath.mkdirs();
+                if (SharedConfig.hideMediaFromGallery) {
+                    AndroidUtilities.createEmptyFile(new File(telegramPath, ".nomedia"));
+                }
 
                 if (!telegramPath.isDirectory()) {
                     ArrayList<File> dirs = AndroidUtilities.getDataDirs();

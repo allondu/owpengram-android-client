@@ -1500,6 +1500,10 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
         updateVideoPlayerTime();
     }
 
+    private static boolean isPlayableVideoMessage(MessageObject messageObject) {
+        return messageObject != null && (messageObject.isVideo() || MessageObject.isVideoFileDocument(messageObject.getDocument()));
+    }
+
     private boolean isVideoPlaying() {
         if (photoViewerWebView != null && photoViewerWebView.isControllable()) {
             return photoViewerWebView.isPlaying();
@@ -4171,7 +4175,7 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
                     boolean animated = a == 0 || a == 1 && sideImage == rightImage || a == 2 && sideImage == leftImage;
                     photoProgressViews[a].setProgress(1.0f, animated);
                     checkProgress(a, false, animated);
-                    if (videoPlayer == null && a == 0 && (currentMessageObject != null && currentMessageObject.isVideo() || currentBotInlineResult != null && (currentBotInlineResult.type.equals("video") || MessageObject.isVideoDocument(currentBotInlineResult.document)) || pageBlocksAdapter != null && (pageBlocksAdapter.isVideo(currentIndex) || pageBlocksAdapter.isHardwarePlayer(currentIndex)))) {
+                    if (videoPlayer == null && a == 0 && (isPlayableVideoMessage(currentMessageObject) || currentBotInlineResult != null && (currentBotInlineResult.type.equals("video") || MessageObject.isVideoDocument(currentBotInlineResult.document)) || pageBlocksAdapter != null && (pageBlocksAdapter.isVideo(currentIndex) || pageBlocksAdapter.isHardwarePlayer(currentIndex)))) {
                         onActionClick(false);
                     }
                     if (a == 0 && videoPlayer != null) {
@@ -14565,7 +14569,7 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
             newMessageObject = imagesArr.get(switchingToIndex);
             newMessageObject.updateTranslation();
             isLivePhoto = newMessageObject.isLivePhoto();
-            isVideo = newMessageObject.isVideo();
+            isVideo = isPlayableVideoMessage(newMessageObject);
 
             title = FilteredSearchView.createFromInfoString(newMessageObject, opennedFromMedia && !openedFromProfile, 0);
             CharSequence subtitle = null;
@@ -15727,7 +15731,7 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
                 newMessageObject.openedInViewer = true;
             }
             isLivePhoto = newMessageObject.isLivePhoto();
-            isVideo = newMessageObject.isVideo();
+            isVideo = isPlayableVideoMessage(newMessageObject);
             if (newMessageObject.isSponsored()) {
                 AndroidUtilities.cancelRunOnUIThread(hideActionBarRunnable);
             }
@@ -16457,7 +16461,7 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
                     TLRPC.Message finalMessage = messageObject.messageOwner;
                     f2Resolver = () -> FileLoader.getInstance(currentAccount).getPathToMessage(finalMessage);
                 }
-                if (messageObject.isVideo()) {
+                if (isPlayableVideoMessage(messageObject)) {
                     canStream = SharedConfig.streamMedia && messageObject.canStreamVideo() && !DialogObject.isEncryptedDialog(messageObject.getDialogId()) || messageObject.hasVideoQualities();
                     isVideo = true;
                 }
@@ -16857,7 +16861,7 @@ public class PhotoViewer implements NotificationCenter.NotificationCenterDelegat
                 if (!TextUtils.isEmpty(restrictionReason)) {
                     imageReceiver.setImageBitmap(parentActivity.getResources().getDrawable(R.drawable.photoview_placeholder));
                     return;
-                } else if (messageObject.isVideo()) {
+                } else if (isPlayableVideoMessage(messageObject)) {
                     if (messageObject.photoThumbs != null && !messageObject.photoThumbs.isEmpty()) {
                         ImageReceiver.BitmapHolder placeHolder = null;
                         if (currentThumb != null && imageReceiver == centerImage) {
