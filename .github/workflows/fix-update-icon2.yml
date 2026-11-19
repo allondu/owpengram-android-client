@@ -1,0 +1,28 @@
+name: Fix update row icon again
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Replace, stage and push
+        run: |
+          sed -i 's/R.drawable.settings_old/R.drawable.settings_devices/' TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+          grep -n "CheckForUpdates" TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+          git add TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+          git config user.name "Meralchen"
+          git config user.email "67538314+Meralchen@users.noreply.github.com"
+          git rm .github/workflows/fix-update-icon2.yml
+          git commit -m "fix: use an existing icon for the update settings row"
+          git push origin HEAD:main
