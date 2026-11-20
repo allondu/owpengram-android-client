@@ -40,8 +40,6 @@ public final class CloudflaredTunnelManager {
     private static final Set<String> waking = ConcurrentHashMap.newKeySet();
     /** Every hostname this process has been asked to tunnel, including login flows. */
     private static final Set<String> requested = ConcurrentHashMap.newKeySet();
-    /** Last Access service-token credentials used for a hostname, including unsaved profiles. */
-    private static final ConcurrentHashMap<String, String[]> accessCredentials = new ConcurrentHashMap<>();
     private static volatile long lastResumeAt;
     private static volatile boolean lifecycleHooked;
     /** Activities currently started; the tunnel service may only start while this is above zero. */
@@ -84,26 +82,9 @@ public final class CloudflaredTunnelManager {
         }
     }
 
-    public static int start(OwpengramServer server) {
-        return server == null ? 0 : start(server.host, server.accessClientId, server.accessClientSecret);
-    }
-
     public static int start(String hostname) {
-        String key = hostname == null ? "" : hostname.toLowerCase(Locale.US);
-        String[] credentials = accessCredentials.get(key);
-        return start(hostname,
-                credentials == null ? null : credentials[0],
-                credentials == null ? null : credentials[1]);
-    }
-
-    /**
-     * Starts (or reuses) the in-process listener for {@code hostname}. The
-     * access id/secret are optional Cloudflare Access service-token credentials
-     * used only for the WebSocket handshake.
-     */
-    public static int start(String hostname, String accessClientId, String accessClientSecret) {
         try {
-            return startTunnel(hostname, accessClientId, accessClientSecret).port;
+            return startTunnel(hostname).port;
         } catch (Throwable t) {
             // This is called from ApplicationLoader while restoring accounts: a tunnel
             // problem must never take the whole launch down with it.
@@ -112,7 +93,7 @@ public final class CloudflaredTunnelManager {
         }
     }
 
-    private static StartResult startTunnel(String hostname, String accessClientId, String accessClientSecret) {
+    private static StartResult startTunnel(String hostname) {
         if (!isValidHostname(hostname)) {
             FileLog.e("Cloudflared tunnel hostname is invalid");
             return new StartResult(0, false);
@@ -125,10 +106,6 @@ public final class CloudflaredTunnelManager {
         ensureLifecycleHook(context);
 
         String key = hostname.toLowerCase(Locale.US);
-        accessCredentials.put(key, new String[]{
-                accessClientId == null ? "" : accessClientId,
-                accessClientSecret == null ? "" : accessClientSecret
-        });
         requested.add(key);
         synchronized (localPorts) {
             Integer existingPort = localPorts.get(key);
@@ -166,9 +143,7 @@ public final class CloudflaredTunnelManager {
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
-                    .putExtra(CloudflaredTunnelService.EXTRA_PORT, localPort)
-                    .putExtra(CloudflaredTunnelService.EXTRA_ACCESS_CLIENT_ID, accessClientId)
-                    .putExtra(CloudflaredTunnelService.EXTRA_ACCESS_CLIENT_SECRET, accessClientSecret);
+                    .putExta(CloudflaredTunnelService.EXTRA_PORT, localPort);
             boolean started = false;
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -329,16 +304,7 @@ public final class CloudflaredTunnelManager {
         hostnames.addAll(requested);
         for (String hostname : hostnames) {
             try {
-                String[] credentials = accessCredentials.get(hostname.toLowerCase(Locale.US));
-                if (credentials == null) {
-                    OwpengramServer server = OwpengramServers.findServerByHost(hostname);
-                    credentials = server == null ? null
-                            : new String[]{server.accessClientId, server.accessClientSecret};
-                }
-                if (!startTunnel(
-                        hostname,
-                        credentials == null ? null : credentials[0],
-                        credentials == null ? null : credentials[1]).started) {
+                if (!startTunnel(hostname).started) {
                     // Still blocked (for example the app went background again); keep it queued.
                     pending.add(hostname);
                 }
@@ -465,8 +431,7 @@ public final class CloudflaredTunnelManager {
     }
 
     private static Integer getStoredPort(Context context, String hostname) {
-        int port = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-                .getInt(PORT_PREFIX + hostname, 0);
+        int port = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE).getInt(PORT_PREFIX + hostname, 0);
         return port > 0 && port <= 65535 ? port : null;
     }
 

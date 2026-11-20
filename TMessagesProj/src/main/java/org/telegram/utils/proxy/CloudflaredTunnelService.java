@@ -16,8 +16,6 @@ import androidx.annotation.Nullable;
 
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.R;
-import org.telegram.owpengram.OwpengramServer;
-import org.telegram.owpengram.OwpengramServers;
 
 import java.util.Locale;
 import java.util.Map;
@@ -37,8 +35,6 @@ public final class CloudflaredTunnelService extends Service {
     static final String ACTION_STOP = "org.telegram.messenger.action.CLOUDFLARED_STOP";
     static final String EXTRA_HOSTNAME = "hostname";
     static final String EXTRA_PORT = "port";
-    static final String EXTRA_ACCESS_CLIENT_ID = "access_client_id";
-    static final String EXTRA_ACCESS_CLIENT_SECRET = "access_client_secret";
 
     private static final String CHANNEL_ID = "cloudflared_tunnel";
     private static final int NOTIFICATION_ID = 7391;
@@ -47,21 +43,14 @@ public final class CloudflaredTunnelService extends Service {
     private static final class TunnelSpec {
         final String hostname;
         final int port;
-        final String accessClientId;
-        final String accessClientSecret;
 
-        TunnelSpec(String hostname, int port, String accessClientId, String accessClientSecret) {
+        TunnelSpec(String hostname, int port) {
             this.hostname = hostname;
             this.port = port;
-            this.accessClientId = accessClientId;
-            this.accessClientSecret = accessClientSecret;
         }
 
-        boolean matches(String hostname, int port, String accessClientId, String accessClientSecret) {
-            return this.port == port
-                    && this.hostname.equalsIgnoreCase(hostname)
-                    && this.accessClientId.equals(accessClientId)
-                    && this.accessClientSecret.equals(accessClientSecret);
+        boolean matches(String hostname, int port) {
+            return this.port == port && this.hostname.equalsIgnoreCase(hostname);
         }
     }
 
@@ -132,17 +121,10 @@ public final class CloudflaredTunnelService extends Service {
         if (intent != null && ACTION_START.equals(intent.getAction())) {
             String hostname = intent.getStringExtra(EXTRA_HOSTNAME);
             int port = intent.getIntExtra(EXTRA_PORT, 0);
-            String accessClientId = intent.getStringExtra(EXTRA_ACCESS_CLIENT_ID);
-            String accessClientSecret = intent.getStringExtra(EXTRA_ACCESS_CLIENT_SECRET);
-            startTunnel(hostname, port, accessClientId, accessClientSecret);
+            startTunnel(hostname, port);
         } else if (intent == null) {
             for (Map.Entry<String, Integer> tunnel : CloudflaredTunnelManager.getStoredTunnels(this).entrySet()) {
-                OwpengramServer config = OwpengramServers.findServerByHost(tunnel.getKey());
-                startTunnel(
-                        tunnel.getKey(),
-                        tunnel.getValue(),
-                        config == null ? null : config.accessClientId,
-                        config == null ? null : config.accessClientSecret);
+                startTunnel(tunnel.getKey(), tunnel.getValue());
             }
         }
         // Deliberately not sticky: a tunnel that crashes the process would otherwise
@@ -151,17 +133,15 @@ public final class CloudflaredTunnelService extends Service {
         return START_NOT_STICKY;
     }
 
-    private synchronized void startTunnel(String hostname, int port, String accessClientId, String accessClientSecret) {
+    private synchronized void startTunnel(String hostname, int port) {
         if (hostname == null || !CloudflaredTunnelManager.isValidHostname(hostname) || port <= 0) {
             FileLog.e("Ignoring invalid Cloudflared tunnel request");
             return;
         }
         String key = hostname.toLowerCase(Locale.US);
-        String id = accessClientId == null ? "" : accessClientId;
-        String secret = accessClientSecret == null ? "" : accessClientSecret;
         TunnelSpec existingSpec = tunnels.get(key);
         CloudflaredTunnelServer existingServer = servers.get(key);
-        if (existingSpec != null && existingSpec.matches(hostname, port, id, secret)
+        if (existingSpec != null && existingSpec.matches(hostname, port)
                 && existingServer != null && existingServer.isRunning()) {
             return;
         }
@@ -169,8 +149,8 @@ public final class CloudflaredTunnelService extends Service {
             existingServer.stop();
             servers.remove(key, existingServer);
         }
-        tunnels.put(key, new TunnelSpec(hostname, port, id, secret));
-        CloudflaredTunnelServer server = new CloudflaredTunnelServer(hostname, port, id, secret);
+        tunnels.put(key, new TunnelSpec(hostname, port));
+        CloudflaredTunnelServer server = new CloudflaredTunnelServer(hostname, port, null, null);
         if (server.start()) {
             servers.put(key, server);
         } else {
@@ -189,7 +169,7 @@ public final class CloudflaredTunnelService extends Service {
             CloudflaredTunnelServer server = servers.get(spec.hostname.toLowerCase(Locale.US));
             if (server == null || !server.isRunning()) {
                 FileLog.e("Cloudflared: listener for " + spec.hostname + " is not running; restarting");
-                startTunnel(spec.hostname, spec.port, spec.accessClientId, spec.accessClientSecret);
+                startTunnel(spec.hostname, spec.port);
             }
         }
     }
