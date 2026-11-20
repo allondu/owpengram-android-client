@@ -251,17 +251,17 @@ public class IntroActivity extends BaseFragment implements NotificationCenter.No
         TextureView textureView = new TextureView(context);
         introTextureView = textureView;
         // Hide the GL surface (and its round logo plate) on page 0, so only the
-        // OwpenGram hexagon logo shows there with no round background behind it.
-        // It fades in as the user swipes to the feature pages (which keep it).
+        // flag logo shows there with no round background behind it. It fades in
+        // as the user swipes to the feature pages (which keep it).
         textureView.setAlpha(0f);
         frameLayout2.addView(textureView, LayoutHelper.createFrame(ICON_WIDTH_DP, ICON_HEIGHT_DP, Gravity.CENTER));
 
-        // Big OwpenGram logo shown on the first intro page (page 0). The Telegram GL
+        // Big flag logo shown on the first intro page (page 0). The Telegram GL
         // logo is made transparent (see EGLThread.initGL), so this is the only logo
         // visible there. It fades out as the user swipes to the feature pages.
         introLogoView = new ImageView(context);
         introLogoView.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        introLogoView.setImageResource(R.drawable.server_owpengram);
+        introLogoView.setImageResource(R.drawable.logo_flag);
         frameLayout2.addView(introLogoView, LayoutHelper.createFrame(ICON_HEIGHT_DP, ICON_HEIGHT_DP, Gravity.CENTER));
         textureView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
             @Override

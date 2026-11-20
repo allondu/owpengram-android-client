@@ -50,6 +50,7 @@ import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -794,7 +795,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             items.add(SettingCell.Factory.of(23, 0xFFC46EF4, 0xFF9F55DF, R.drawable.settings_features, getString(R.string.TelegramFeatures)));
             items.add(SettingCell.Factory.of(19, 0xFF55CA47, 0xFF27B434, R.drawable.settings_policy, getString(R.string.PrivacyPolicy)));
         }
-        items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, SharedConfig.getAppDisplayName()));
+        items.add(SettingCell.Factory.of(30, 0xFF6E7B86, 0xFF55606A, R.drawable.github_logo, getString(R.string.GitHubHelp), getString(R.string.GitHubHelpInfo)));
         items.add(SettingCell.Factory.of(31, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_devices, getString(R.string.CheckForUpdates)));
         boolean loggingEnabled = org.telegram.owpengram.OwpengramLogs.isEnabled();
         items.add(SettingCell.Factory.of(32, 0xFF6E7B86, 0xFF55606A, R.drawable.settings_data, getString(R.string.OwpengramLogging), getString(R.string.OwpengramLoggingSubtitle), getString(loggingEnabled ? R.string.OwpengramLoggingOn : R.string.OwpengramLoggingOff)));
@@ -902,10 +903,21 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                     updateLogoSelection(logoImages[j], icons[j] == selected[0]);
                 }
             });
-            logoRow.addView(item, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+            item.setPadding(dp(2), 0, dp(2), 0);
+            logoRow.addView(item, new LinearLayout.LayoutParams(dp(68), LinearLayout.LayoutParams.WRAP_CONTENT));
             updateLogoSelection(image, icon == selected[0]);
         }
-        content.addView(logoRow, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 6, 0, 0));
+        HorizontalScrollView logoScroll = new HorizontalScrollView(activity);
+        logoScroll.setHorizontalScrollBarEnabled(false);
+        logoScroll.setFillViewport(false);
+        logoScroll.addView(logoRow);
+        content.addView(logoScroll, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 6, 0, 0));
+
+        TextView logoHint = new TextView(activity);
+        logoHint.setText(getString(R.string.AppLogoHint));
+        logoHint.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 13);
+        logoHint.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText, resourceProvider));
+        content.addView(logoHint, LayoutHelper.createLinear(LayoutHelper.MATCH_PARENT, LayoutHelper.WRAP_CONTENT, 0, 6, 0, 0));
 
         AlertDialog.Builder builder = new AlertDialog.Builder(activity, resourceProvider);
         builder.setTitle(getString(R.string.AppIdentity));
@@ -1048,7 +1060,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 Browser.openUrl(getParentActivity(), LocaleController.getString(R.string.PrivacyPolicyUrl));
                 break;
             case 30:
-                Browser.openUrl(getParentActivity(), org.telegram.owpengram.OwpengramServers.SERVER_REPO_URL);
+                showGitHubRepositoriesDialog();
                 break;
             case 31: {
                 LaunchActivity activity = getParentActivity() instanceof LaunchActivity ? (LaunchActivity) getParentActivity() : LaunchActivity.instance;
@@ -1096,6 +1108,24 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
                 break;
             }
         }
+    }
+
+    private void showGitHubRepositoriesDialog() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourceProvider);
+        builder.setTitle(getString(R.string.GitHubRepositoriesTitle));
+        builder.setItems(new CharSequence[]{
+                getString(R.string.GitHubOwpenGramRepository),
+                getString(R.string.GitHubAllonDuRepository)
+        }, (dialog, which) -> {
+            Browser.openUrl(getParentActivity(), which == 0
+                    ? org.telegram.owpengram.OwpengramServers.OWPENGRAM_REPO_URL
+                    : org.telegram.owpengram.OwpengramServers.ALLONDU_REPO_URL);
+        });
+        builder.setNegativeButton(getString(R.string.Cancel), null);
+        showDialog(builder.create());
     }
 
     private void showLoggingDialog() {
@@ -1445,6 +1475,8 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
             this.resourcesProvider = resourcesProvider;
             this.mini = mini;
             setOrientation(HORIZONTAL);
+            setPadding(0, dp(8), 0, dp(8));
+            setMinimumHeight(dp(mini ? 44 : 60));
 
             iconLayout = new FrameLayout(context);
             iconLayout.setBackground(iconBackground = new Background());
@@ -1466,6 +1498,9 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
 
             valueView = new TextView(context);
             valueView.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 16);
+            valueView.setSingleLine(true);
+            valueView.setEllipsize(TextUtils.TruncateAt.END);
+            valueView.setMaxWidth(dp(120));
             if (LocaleController.isRTL) {
                 addView(valueView, LayoutHelper.createLinear(LayoutHelper.WRAP_CONTENT, LayoutHelper.WRAP_CONTENT, Gravity.CENTER_VERTICAL, 20, 0, 0, 0));
                 addView(textLayout, LayoutHelper.createLinear(0, LayoutHelper.WRAP_CONTENT, 1, Gravity.CENTER_VERTICAL | Gravity.FILL_HORIZONTAL, 20, 0, mini ? 12 : 18, 0));
@@ -1517,8 +1552,12 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
         protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
             super.onMeasure(
                 MeasureSpec.makeMeasureSpec(MeasureSpec.getSize(widthMeasureSpec), MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(dp(mini ? 44 : twoLines ? 60 : 50), MeasureSpec.EXACTLY)
+                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
             );
+            final int minHeight = dp(mini ? 44 : twoLines ? 60 : 50);
+            if (getMeasuredHeight() < minHeight) {
+                setMeasuredDimension(getMeasuredWidth(), minHeight);
+            }
         }
 
         public static class Background extends Drawable {

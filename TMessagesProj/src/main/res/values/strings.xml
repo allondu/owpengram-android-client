@@ -40,6 +40,12 @@
     <string name="AppNameLabel">App name</string>
     <string name="AppNameHint">Leave empty to use flag</string>
     <string name="AppLogoLabel">Launcher logo</string>
+    <string name="AppLogoHint">Black is the default. White is the light version for dark home screens.</string>
+    <string name="GitHubHelp">OwpenGram on GitHub</string>
+    <string name="GitHubHelpInfo">OwpenGram and AllonDu repositories</string>
+    <string name="GitHubRepositoriesTitle">Open repository</string>
+    <string name="GitHubOwpenGramRepository">OwpenGram repository</string>
+    <string name="GitHubAllonDuRepository">AllonDu repository</string>
     <string name="LanguageName">English</string>
     <string name="English">English</string>
     <string name="LanguageNameInEnglish">English</string>
@@ -5856,7 +5862,8 @@
     <string name="BioLimitTitle">Bio</string>
     <string name="BioLimitSubtitle">Add more symbols and use links in your bio.</string>
     <string name="AppIcon">App Icon</string>
-    <string name="AppIconDefault">Flag</string>
+    <string name="AppIconDefault">Flag Black</string>
+    <string name="AppIconFlagWhite">Flag White</string>
     <string name="AppIconVintage">Dark</string>
     <string name="AppIconAqua">Triad</string>
     <string name="AppIconPremium">Triad Dark</string>

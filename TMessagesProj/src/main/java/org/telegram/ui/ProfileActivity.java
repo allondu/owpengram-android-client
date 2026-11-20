@@ -4583,7 +4583,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
             } else if (position == policyRow) {
                 Browser.openUrl(getParentActivity(), LocaleController.getString(R.string.PrivacyPolicyUrl));
             } else if (position == owpengramRow) {
-                Browser.openUrl(getParentActivity(), org.telegram.owpengram.OwpengramServers.SERVER_REPO_URL);
+                showGitHubRepositoriesDialog();
             } else if (position == sendLogsRow) {
                 sendLogs(getParentActivity(), false);
             } else if (position == sendLastLogsRow) {
@@ -5989,6 +5989,24 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
 
         ViewCompat.setOnApplyWindowInsetsListener(fragmentView, this::onApplyWindowInsets);
         return fragmentView;
+    }
+
+    private void showGitHubRepositoriesDialog() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity(), resourcesProvider);
+        builder.setTitle(LocaleController.getString(R.string.GitHubRepositoriesTitle));
+        builder.setItems(new CharSequence[]{
+                LocaleController.getString(R.string.GitHubOwpenGramRepository),
+                LocaleController.getString(R.string.GitHubAllonDuRepository)
+        }, (dialog, which) -> {
+            Browser.openUrl(getParentActivity(), which == 0
+                    ? org.telegram.owpengram.OwpengramServers.OWPENGRAM_REPO_URL
+                    : org.telegram.owpengram.OwpengramServers.ALLONDU_REPO_URL);
+        });
+        builder.setNegativeButton(LocaleController.getString(R.string.Cancel), null);
+        showDialog(builder.create());
     }
 
     private void toggleNoForwards(boolean enabled) {
@@ -13921,7 +13939,7 @@ public class ProfileActivity extends BaseFragment implements NotificationCenter.
                     } else if (position == policyRow) {
                         textCell.setTextAndIcon(LocaleController.getString(R.string.PrivacyPolicy), R.drawable.msg2_policy, true);
                     } else if (position == owpengramRow) {
-                        textCell.setTextAndIcon("OwpenGram", R.drawable.github_logo, false);
+                        textCell.setTextAndIcon(LocaleController.getString(R.string.GitHubHelp), R.drawable.github_logo, false);
                     } else if (position == sendLogsRow) {
                         textCell.setText(LocaleController.getString(R.string.DebugSendLogs), true);
                     } else if (position == sendLastLogsRow) {
