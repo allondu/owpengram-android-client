@@ -19,7 +19,6 @@ import org.telegram.owpengram.OwpengramServers;
 import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.ui.Components.ForegroundDetector;
 
-import java.io.File;
 import java.net.IDN;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -41,6 +40,8 @@ public final class CloudflaredTunnelManager {
     private static final Set<String> waking = ConcurrentHashMap.newKeySet();
     /** Every hostname this process has been asked to tunnel, including login flows. */
     private static final Set<String> requested = ConcurrentHashMap.newKeySet();
+    /** Last Access service-token credentials used for a hostname, including unsaved profiles. */
+    private static final ConcurrentHashMap<String, String[]> accessCredentials = new ConcurrentHashMap<>();
     private static volatile long lastResumeAt;
     private static volatile boolean lifecycleHooked;
     /** Activities currently started; the tunnel service may only start while this is above zero. */
@@ -83,9 +84,26 @@ public final class CloudflaredTunnelManager {
         }
     }
 
+    public static int start(OwpengramServer server) {
+        return server == null ? 0 : start(server.host, server.accessClientId, server.accessClientSecret);
+    }
+
     public static int start(String hostname) {
+        String key = hostname == null ? "" : hostname.toLowerCase(Locale.US);
+        String[] credentials = accessCredentials.get(key);
+        return start(hostname,
+                credentials == null ? null : credentials[0],
+                credentials == null ? null : credentials[1]);
+    }
+
+    /**
+     * Starts (or reuses) the in-process listener for {@code hostname}. The
+     * access id/secret are optional Cloudflare Access service-token credentials
+     * used only for the WebSocket handshake.
+     */
+    public static int start(String hostname, String accessClientId, String accessClientSecret) {
         try {
-            return startTunnel(hostname).port;
+            return startTunnel(hostname, accessClientId, accessClientSecret).port;
         } catch (Throwable t) {
             // This is called from ApplicationLoader while restoring accounts: a tunnel
             // problem must never take the whole launch down with it.
@@ -94,20 +112,11 @@ public final class CloudflaredTunnelManager {
         }
     }
 
-    private static StartResult startTunnel(String hostname) {
+    private static StartResult startTunnel(String hostname, String accessClientId, String accessClientSecret) {
         if (!isValidHostname(hostname)) {
             FileLog.e("Cloudflared tunnel hostname is invalid");
             return new StartResult(0, false);
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            FileLog.e("Cloudflared tunnels require Android 8.0 or later");
-            return new StartResult(0, false);
-        }
-        if (!isArm64Supported()) {
-            FileLog.e("Cloudflared tunnels are currently available on ARM64 devices only");
-            return new StartResult(0, false);
-        }
-
         Context context = ApplicationLoader.applicationContext;
         if (context == null) {
             FileLog.e("Cloudflared tunnel requested before the application context was ready");
@@ -115,13 +124,11 @@ public final class CloudflaredTunnelManager {
         }
         ensureLifecycleHook(context);
 
-        File executable = new File(context.getApplicationInfo().nativeLibraryDir, "libcloudflared.so");
-        if (!executable.isFile()) {
-            FileLog.e("Cloudflared tunnel support is not packaged in this build");
-            return new StartResult(0, false);
-        }
-
         String key = hostname.toLowerCase(Locale.US);
+        accessCredentials.put(key, new String[]{
+                accessClientId == null ? "" : accessClientId,
+                accessClientSecret == null ? "" : accessClientSecret
+        });
         requested.add(key);
         synchronized (localPorts) {
             Integer existingPort = localPorts.get(key);
@@ -133,8 +140,8 @@ public final class CloudflaredTunnelManager {
                 localPort = existingPort;
             } else {
                 Integer storedPort = getStoredPort(context, key);
-                // An old cloudflared child may still own the stored port after the
-                // app process was killed. Reusing it would make every retry fail
+                // A previous process may have left the port occupied, or another
+                // app may have taken it. Reusing it would make every bind fail
                 // with "address already in use", so only reuse a free port.
                 localPort = storedPort != null && isPortAvailable(storedPort)
                         ? storedPort : findLocalPort();
@@ -159,7 +166,9 @@ public final class CloudflaredTunnelManager {
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
-                    .putExtra(CloudflaredTunnelService.EXTRA_PORT, localPort);
+                    .putExtra(CloudflaredTunnelService.EXTRA_PORT, localPort)
+                    .putExtra(CloudflaredTunnelService.EXTRA_ACCESS_CLIENT_ID, accessClientId)
+                    .putExtra(CloudflaredTunnelService.EXTRA_ACCESS_CLIENT_SECRET, accessClientSecret);
             boolean started = false;
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -179,8 +188,8 @@ public final class CloudflaredTunnelManager {
                 pending.remove(key);
                 if (!alreadyListening) {
                     // The account is configured for 127.0.0.1:port immediately, but
-                    // cloudflared still has to bind it. Wake the account once the
-                    // listener exists. Do NOT re-apply the stored server here:
+                    // the in-process listener still has to bind it. Wake the account
+                    // once the listener exists. Do NOT re-apply the stored server here:
                     // native_applyServerConfig suspends every DC connection on a
                     // single-server backend, so doing it on each tunnel blip shows
                     // up as a disconnect/reconnect and an "Updating" title.
@@ -320,7 +329,16 @@ public final class CloudflaredTunnelManager {
         hostnames.addAll(requested);
         for (String hostname : hostnames) {
             try {
-                if (!startTunnel(hostname).started) {
+                String[] credentials = accessCredentials.get(hostname.toLowerCase(Locale.US));
+                if (credentials == null) {
+                    OwpengramServer server = OwpengramServers.findServerByHost(hostname);
+                    credentials = server == null ? null
+                            : new String[]{server.accessClientId, server.accessClientSecret};
+                }
+                if (!startTunnel(
+                        hostname,
+                        credentials == null ? null : credentials[0],
+                        credentials == null ? null : credentials[1]).started) {
                     // Still blocked (for example the app went background again); keep it queued.
                     pending.add(hostname);
                 }
@@ -385,8 +403,8 @@ public final class CloudflaredTunnelManager {
 
     /**
      * Whether something is already listening on the tunnelled port. This uses
-     * a bind instead of a TCP connect on purpose: connecting to cloudflared's
-     * local proxy opens a real tunnelled connection (Cloudflare Access sees it
+     * a bind instead of a TCP connect on purpose: connecting to the local
+     * listener opens a real tunnelled connection (Cloudflare Access sees it
      * and may start an auth flow), while a bind only asks the kernel whether the
      * port is taken. The tunnel is the only expected owner of this port.
      */
@@ -457,12 +475,15 @@ public final class CloudflaredTunnelManager {
                 .edit().putInt(PORT_PREFIX + hostname, port).apply();
     }
 
+    /**
+     * Waits for the listener owned by an earlier {@link #start} call. This
+     * deliberately does not start another tunnel: starting one without the
+     * account's Access credentials would replace a tunnel that was just
+     * started with them.
+     */
     public static boolean awaitLocalListener(String hostname, long timeoutMs) {
-        int port = start(hostname);
-        if (port == 0) {
-            return false;
-        }
-        return awaitListener(port, timeoutMs);
+        int port = getLocalPort(hostname);
+        return port != 0 && awaitListener(port, timeoutMs);
     }
 
     public static int getLocalPort(String hostname) {
@@ -471,15 +492,6 @@ public final class CloudflaredTunnelManager {
         }
         Integer port = localPorts.get(hostname.toLowerCase(Locale.US));
         return port == null ? 0 : port;
-    }
-
-    private static boolean isArm64Supported() {
-        for (String abi : Build.SUPPORTED_ABIS) {
-            if ("arm64-v8a".equals(abi)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static int findLocalPort() {
