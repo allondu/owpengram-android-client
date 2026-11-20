@@ -40,6 +40,7 @@ import org.telegram.messenger.utils.Choreographer60FpsContent;
 import org.telegram.messenger.voip.VideoCapturerDevice;
 import org.telegram.owpengram.OwpengramServers;
 import org.telegram.tgnet.ConnectionsManager;
+import org.telegram.utils.proxy.CloudflaredTunnelManager;
 import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.Components.ForegroundDetector;
@@ -343,6 +344,15 @@ public class ApplicationLoader extends Application {
                 }
             }
         };
+        // Install the tunnel foreground hook before any activity starts. It used
+        // to be installed lazily on the first tunnel request, which could happen
+        // after the current activity had already started; the deferred tunnel then
+        // never received an onActivityStarted callback.
+        try {
+            CloudflaredTunnelManager.initialize(applicationContext);
+        } catch (Throwable t) {
+            FileLog.e("Unable to initialize Cloudflared foreground tracking", t);
+        }
         if (BuildConfig.DEBUG_VERSION) {
             new ANRDetector(FileLog::dumpANR);
         }

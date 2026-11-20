@@ -7,11 +7,14 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
@@ -39,6 +42,18 @@ public final class CloudflaredTunnelService extends Service {
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, Thread> workers = new ConcurrentHashMap<>();
+    private final Map<String, Integer> ports = new ConcurrentHashMap<>();
+    private final Handler watchdogHandler = new Handler(Looper.getMainLooper());
+    private final Runnable watchdog = new Runnable() {
+        @Override
+        public void run() {
+            if (stopping) {
+                return;
+            }
+            restartDeadWorkers();
+            watchdogHandler.postDelayed(this, 30000);
+        }
+    };
     private final Object networkLock = new Object();
     private volatile boolean stopping;
     private volatile boolean networkAvailable = true;
@@ -54,6 +69,10 @@ public final class CloudflaredTunnelService extends Service {
         try {
             createNotificationChannel();
             registerNetworkCallback();
+            // A worker can die without the process exiting (for example after an
+            // unexpected native error). Keep a low-frequency supervisor so the
+            // user does not have to leave and re-enter the app to get a tunnel.
+            startWatchdog();
         } catch (RuntimeException e) {
             FileLog.e("Unable to prepare the Cloudflared tunnel service", e);
         }
@@ -77,7 +96,16 @@ public final class CloudflaredTunnelService extends Service {
             return START_NOT_STICKY;
         }
         try {
-            startForeground(NOTIFICATION_ID, createNotification());
+            if (Build.VERSION.SDK_INT >= 34) {
+                // Declare the manifest type explicitly. On Android 14+ a foreground
+                // service without a type can be rejected with
+                // MissingForegroundServiceTypeException, which left the tunnel
+                // permanently disconnected after it had been started successfully.
+                startForeground(NOTIFICATION_ID, createNotification(),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification());
+            }
         } catch (RuntimeException e) {
             // Android 12+ refuses a foreground service started from the background,
             // which is exactly what a sticky restart looks like. Letting this escape
@@ -87,6 +115,7 @@ public final class CloudflaredTunnelService extends Service {
             stopSelf(startId);
             return START_NOT_STICKY;
         }
+        startWatchdog();
         if (intent != null && ACTION_START.equals(intent.getAction())) {
             String hostname = intent.getStringExtra(EXTRA_HOSTNAME);
             int port = intent.getIntExtra(EXTRA_PORT, 0);
@@ -108,14 +137,36 @@ public final class CloudflaredTunnelService extends Service {
 
     private void startTunnel(String hostname, int port) {
         String key = hostname.toLowerCase(java.util.Locale.US);
-        if (workers.containsKey(key)) {
+        Thread existing = workers.get(key);
+        if (existing != null && existing.isAlive()) {
             return;
         }
+        // The old thread may have died without removing its map entry (for
+        // example after an unexpected Error). Treat the map as a cache of live
+        // workers, not as proof that the tunnel is running.
+        workers.remove(key, existing);
         stopping = false;
+        ports.put(key, port);
         Thread worker = new Thread(() -> runTunnel(key, hostname, port), "Cloudflared-" + port);
-        Thread existing = workers.putIfAbsent(key, worker);
-        if (existing == null) {
-            worker.start();
+        workers.put(key, worker);
+        worker.start();
+    }
+
+    private void startWatchdog() {
+        watchdogHandler.removeCallbacks(watchdog);
+        watchdogHandler.postDelayed(watchdog, 30000);
+    }
+
+    /** Restarts workers that died without the service itself being destroyed. */
+    private void restartDeadWorkers() {
+        for (Map.Entry<String, Integer> tunnel : ports.entrySet()) {
+            String key = tunnel.getKey();
+            Thread worker = workers.get(key);
+            if (worker == null || !worker.isAlive()) {
+                FileLog.e("Cloudflared worker for " + key + " is not running; restarting");
+                workers.remove(key, worker);
+                startTunnel(key, tunnel.getValue());
+            }
         }
     }
 
@@ -124,6 +175,7 @@ public final class CloudflaredTunnelService extends Service {
         if (!executable.isFile()) {
             FileLog.e("Bundled Cloudflared ARM64 executable is missing");
             workers.remove(key, Thread.currentThread());
+            ports.remove(key);
             return;
         }
 
@@ -292,6 +344,7 @@ public final class CloudflaredTunnelService extends Service {
                     if (changed) {
                         synchronized (networkLock) {
                             networkAvailable = false;
+                            networkLock.notifyAll();
                         }
                         restartTunnelsForNetworkChange();
                     }
@@ -377,6 +430,7 @@ public final class CloudflaredTunnelService extends Service {
 
     private void stopAll() {
         stopping = true;
+        watchdogHandler.removeCallbacks(watchdog);
         if (connectivityManager != null && networkCallback != null) {
             try {
                 connectivityManager.unregisterNetworkCallback(networkCallback);
@@ -392,6 +446,7 @@ public final class CloudflaredTunnelService extends Service {
             worker.interrupt();
         }
         processes.clear();
+        ports.clear();
     }
 
     @Override
