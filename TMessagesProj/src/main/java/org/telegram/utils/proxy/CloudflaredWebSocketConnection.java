@@ -37,6 +37,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * every connection" failure mode.</p>
  */
 final class CloudflaredWebSocketConnection implements Runnable {
+    interface CloseListener {
+        void onClosed(CloudflaredWebSocketConnection connection);
+    }
+
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_BUFFER_SIZE = 16 * 1024;
     private static final int MAX_QUEUED_FRAMES = 64;
@@ -60,13 +64,13 @@ final class CloudflaredWebSocketConnection implements Runnable {
     private final Socket socket;
     private final String accessClientId;
     private final String accessClientSecret;
-    private final Runnable onClosed;
+    private final CloseListener onClosed;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final BlockingQueue<byte[]> incoming = new ArrayBlockingQueue<>(MAX_QUEUED_FRAMES);
     private volatile WebSocket webSocket;
 
     CloudflaredWebSocketConnection(String hostname, Socket socket, String accessClientId,
-                                   String accessClientSecret, Runnable onClosed) {
+                                   String accessClientSecret, CloseListener onClosed) {
         this.hostname = hostname;
         this.socket = socket;
         this.accessClientId = accessClientId == null ? "" : accessClientId;
@@ -240,9 +244,11 @@ final class CloudflaredWebSocketConnection implements Runnable {
             socket.close();
         } catch (IOException ignored) {
         }
-        try {
-            onClosed.run();
-        } catch (Throwable ignored) {
+        if (onClosed != null) {
+            try {
+                onClosed.onClosed(this);
+            } catch (Throwable ignored) {
+            }
         }
     }
 }
