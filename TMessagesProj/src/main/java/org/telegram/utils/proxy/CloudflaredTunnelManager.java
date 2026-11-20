@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.TextUtils;
 
 import org.telegram.messenger.AndroidUtilities;
@@ -15,12 +16,16 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.UserConfig;
 import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
+import org.telegram.ui.Components.ForegroundDetector;
 
 import java.io.File;
 import java.net.IDN;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
-import java.util.ArrayList;
+import java.net.Socket;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -34,6 +39,9 @@ public final class CloudflaredTunnelManager {
     private static final Set<String> pending = ConcurrentHashMap.newKeySet();
     /** Hostnames whose accounts still have to be re-pointed at a recovered tunnel. */
     private static final Set<String> reapplying = ConcurrentHashMap.newKeySet();
+    /** Every hostname this process has been asked to tunnel, including login flows. */
+    private static final Set<String> requested = ConcurrentHashMap.newKeySet();
+    private static volatile long lastResumeAt;
     private static volatile boolean lifecycleHooked;
     /** Activities currently started; the tunnel service may only start while this is above zero. */
     private static volatile int visibleActivities;
@@ -114,18 +122,29 @@ public final class CloudflaredTunnelManager {
         }
 
         String key = hostname.toLowerCase(Locale.US);
+        requested.add(key);
         synchronized (localPorts) {
             Integer existingPort = localPorts.get(key);
-            if (existingPort == null) {
-                existingPort = getStoredPort(context, key);
+            int localPort;
+            if (existingPort != null) {
+                // Already chosen in this process: keep it even while the service is
+                // starting, otherwise a second request would move the account to a
+                // different port than the tunnel that is coming up.
+                localPort = existingPort;
+            } else {
+                Integer storedPort = getStoredPort(context, key);
+                // An old cloudflared child may still own the stored port after the
+                // app process was killed. Reusing it would make every retry fail
+                // with "address already in use", so only reuse a free port.
+                localPort = storedPort != null && isPortAvailable(storedPort)
+                        ? storedPort : findLocalPort();
             }
-            int localPort = existingPort != null ? existingPort : findLocalPort();
             if (localPort <= 0) {
                 return new StartResult(0, false);
             }
             savePort(context, key, localPort);
             localPorts.put(key, localPort);
-            if (visibleActivities == 0) {
+            if (!isAppVisible()) {
                 // Android kills the process when a service started with
                 // startForegroundService() has not called startForeground() within
                 // five seconds. Restoring a stored tunnel from Application.onCreate
@@ -136,6 +155,7 @@ public final class CloudflaredTunnelManager {
                 FileLog.d("Cloudflared tunnel for " + hostname + " is waiting for a visible activity");
                 return new StartResult(localPort, false);
             }
+            boolean alreadyListening = isListenerOpen(localPort);
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
@@ -153,15 +173,57 @@ public final class CloudflaredTunnelManager {
                 // has no visible activity, e.g. from Application.onCreate. Keep the
                 // port and retry once an activity is visible: returning 0 here used
                 // to leave the account configured for no server at all.
-                pending.add(key);
                 FileLog.e("Cloudflared foreground service is not allowed to start yet", e);
             }
-            if (started && pending.remove(key)) {
-                // The account was pointed at this port while the tunnel was down.
-                // Once the listener is really up, re-apply its server config.
-                scheduleReapply(hostname, key, localPort);
+            if (started) {
+                pending.remove(key);
+                if (!alreadyListening) {
+                    // The account is configured for 127.0.0.1:port immediately, but
+                    // cloudflared still has to bind it. Re-apply the server once the
+                    // listener exists so ConnectionsManager opens a fresh socket
+                    // instead of backing off against a closed port.
+                    scheduleReapply(hostname, key, localPort);
+                }
+            } else {
+                // Keep it queued for the next visible activity.
+                pending.add(key);
             }
             return new StartResult(localPort, started);
+        }
+    }
+
+    /**
+     * Whether starting a foreground service is currently allowed. The activity
+     * counter alone is not enough: the lifecycle hook can be registered after an
+     * activity has already started (for example the first time the user selects
+     * a Cloudflared server in Settings), so the counter never saw that activity.
+     * ApplicationLoader.mainInterfacePaused is false while the main UI is resumed
+     * and true during the cold-start window where starting the service would hit
+     * the five-second foreground-service watchdog.
+     */
+    private static boolean isAppVisible() {
+        if (visibleActivities > 0 || !ApplicationLoader.mainInterfacePaused) {
+            return true;
+        }
+        if (!lifecycleHooked) {
+            // Fallback for the rare case where the early hook could not be
+            // installed. The detector tracks every activity, including bubbles.
+            ForegroundDetector detector = ForegroundDetector.getInstance();
+            return detector != null && detector.isForeground();
+        }
+        return false;
+    }
+
+    /**
+     * Registers the foreground hook early, from Application.onCreate, so an
+     * activity that is already running when the first tunnel is requested is
+     * still counted. Without this, selecting the first Cloudflared server from
+     * Settings could queue the tunnel forever: the hook was installed after the
+     * activity had already started, so no onActivityStarted callback followed.
+     */
+    public static void initialize(Context context) {
+        if (context != null) {
+            ensureLifecycleHook(context);
         }
     }
 
@@ -189,9 +251,9 @@ public final class CloudflaredTunnelManager {
                             // exception here would take the whole app down, so a tunnel
                             // problem must stay contained.
                             try {
-                                resumePending();
+                                resumeTunnels();
                             } catch (Throwable t) {
-                                FileLog.e("Unable to resume pending Cloudflared tunnels", t);
+                                FileLog.e("Unable to resume Cloudflared tunnels", t);
                             }
                         }
 
@@ -239,11 +301,22 @@ public final class CloudflaredTunnelManager {
         }
     }
 
-    private static void resumePending() {
-        if (pending.isEmpty()) {
+    /**
+     * Called whenever an activity becomes visible. Restarts every tunnel this
+     * process asked for, not only hostnames that were waiting for a visible
+     * activity: Android may destroy the tunnel service while the app is in the
+     * background. Without this, the account stays pointed at a local port with
+     * no listener until the whole app is force-stopped and relaunched.
+     */
+    private static void resumeTunnels() {
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastResumeAt < 1500) {
             return;
         }
-        for (String hostname : new ArrayList<>(pending)) {
+        lastResumeAt = now;
+        Set<String> hostnames = new LinkedHashSet<>(pending);
+        hostnames.addAll(requested);
+        for (String hostname : hostnames) {
             try {
                 if (!startTunnel(hostname).started) {
                     // Still blocked (for example the app went background again); keep it queued.
@@ -251,23 +324,41 @@ public final class CloudflaredTunnelManager {
                 }
             } catch (Throwable t) {
                 pending.add(hostname);
-                FileLog.e("Unable to start pending Cloudflared tunnel for " + hostname, t);
+                FileLog.e("Unable to start Cloudflared tunnel for " + hostname, t);
             }
         }
     }
 
-    /** Waits for the recovered listener, then re-applies every account that uses this host. */
+    /** Waits for the listener, then re-applies every account that uses this host. */
     private static void scheduleReapply(final String hostname, String key, final int port) {
         if (!reapplying.add(key)) {
             return;
         }
         Thread worker = new Thread(() -> {
+            boolean ready = false;
             try {
-                if (awaitListener(port, 20000)) {
-                    AndroidUtilities.runOnUIThread(() -> reapplyAccounts(hostname));
-                }
-            } finally {
+                ready = awaitListener(port, 20000);
+            } catch (Throwable t) {
+                FileLog.e("Unable to wait for the Cloudflared listener for " + hostname, t);
+            }
+            if (!ready) {
                 reapplying.remove(key);
+                FileLog.e("Cloudflared listener for " + hostname + " did not become ready on port " + port);
+                return;
+            }
+            try {
+                AndroidUtilities.runOnUIThread(() -> {
+                    try {
+                        reapplyAccounts(hostname);
+                    } catch (Throwable t) {
+                        FileLog.e("Unable to re-apply Cloudflared server for " + hostname, t);
+                    } finally {
+                        reapplying.remove(key);
+                    }
+                });
+            } catch (Throwable t) {
+                reapplying.remove(key);
+                FileLog.e("Unable to schedule Cloudflared server re-apply for " + hostname, t);
             }
         }, "CloudflaredReapply");
         worker.setDaemon(true);
@@ -277,19 +368,36 @@ public final class CloudflaredTunnelManager {
     private static boolean awaitListener(int port, long timeoutMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            try (java.net.Socket socket = new java.net.Socket()) {
-                socket.connect(new java.net.InetSocketAddress("127.0.0.1", port), 250);
+            if (isListenerOpen(port)) {
                 return true;
-            } catch (Exception ignored) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
+            }
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
             }
         }
-        return false;
+        return isListenerOpen(port);
+    }
+
+    private static boolean isListenerOpen(int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("127.0.0.1", port), 250);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean isPortAvailable(int port) {
+        try (ServerSocket socket = new ServerSocket()) {
+            socket.setReuseAddress(true);
+            socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static void reapplyAccounts(String hostname) {
@@ -358,11 +466,18 @@ public final class CloudflaredTunnelManager {
     }
 
     private static int findLocalPort() {
-        try (ServerSocket socket = new ServerSocket(0)) {
-            return socket.getLocalPort();
-        } catch (Exception e) {
-            FileLog.e("Unable to allocate a local Cloudflared port", e);
-            return 0;
+        for (int attempt = 0; attempt < 5; attempt++) {
+            try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+                int port = socket.getLocalPort();
+                if (!localPorts.containsValue(port)) {
+                    return port;
+                }
+            } catch (Exception e) {
+                FileLog.e("Unable to allocate a local Cloudflared port", e);
+                return 0;
+            }
         }
+        FileLog.e("Unable to allocate a free local Cloudflared port");
+        return 0;
     }
 }
