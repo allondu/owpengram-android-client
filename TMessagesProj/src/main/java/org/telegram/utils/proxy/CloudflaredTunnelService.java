@@ -5,32 +5,31 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
-import android.net.ConnectivityManager;
-import android.net.LinkProperties;
-import android.net.Network;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
 
-import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.FileLog;
 import org.telegram.messenger.R;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStreamReader;
-import java.net.InetAddress;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Keeps the app's Cloudflared listeners alive while the app process is alive.
+ *
+ * <p>There is no cloudflared child process any more. Each tunnel is a
+ * {@link CloudflaredTunnelServer} in this process, and each accepted Telegram
+ * connection is carried by its own WebSocket. The foreground service therefore
+ * only has to keep the process from being killed and recreate a listener if its
+ * accept thread ever dies.</p>
+ */
 public final class CloudflaredTunnelService extends Service {
     static final String ACTION_START = "org.telegram.messenger.action.CLOUDFLARED_START";
     static final String ACTION_STOP = "org.telegram.messenger.action.CLOUDFLARED_STOP";
@@ -39,10 +38,24 @@ public final class CloudflaredTunnelService extends Service {
 
     private static final String CHANNEL_ID = "cloudflared_tunnel";
     private static final int NOTIFICATION_ID = 7391;
+    private static final long WATCHDOG_INTERVAL_MS = 30_000;
 
-    private final Map<String, Process> processes = new ConcurrentHashMap<>();
-    private final Map<String, Thread> workers = new ConcurrentHashMap<>();
-    private final Map<String, Integer> ports = new ConcurrentHashMap<>();
+    private static final class TunnelSpec {
+        final String hostname;
+        final int port;
+
+        TunnelSpec(String hostname, int port) {
+            this.hostname = hostname;
+            this.port = port;
+        }
+
+        boolean matches(String hostname, int port) {
+            return this.port == port && this.hostname.equalsIgnoreCase(hostname);
+        }
+    }
+
+    private final Map<String, CloudflaredTunnelServer> servers = new ConcurrentHashMap<>();
+    private final Map<String, TunnelSpec> tunnels = new ConcurrentHashMap<>();
     private final Handler watchdogHandler = new Handler(Looper.getMainLooper());
     private final Runnable watchdog = new Runnable() {
         @Override
@@ -50,28 +63,17 @@ public final class CloudflaredTunnelService extends Service {
             if (stopping) {
                 return;
             }
-            restartDeadWorkers();
-            watchdogHandler.postDelayed(this, 30000);
+            restartMissingServers();
+            watchdogHandler.postDelayed(this, WATCHDOG_INTERVAL_MS);
         }
     };
-    private final Object networkLock = new Object();
     private volatile boolean stopping;
-    private volatile boolean networkAvailable = true;
-    private volatile long networkGeneration;
-    private Network activeNetwork;
-    private boolean hasSeenNetwork;
-    private ConnectivityManager connectivityManager;
-    private ConnectivityManager.NetworkCallback networkCallback;
 
     @Override
     public void onCreate() {
         super.onCreate();
         try {
             createNotificationChannel();
-            registerNetworkCallback();
-            // A worker can die without the process exiting (for example after an
-            // unexpected native error). Keep a low-frequency supervisor so the
-            // user does not have to leave and re-enter the app to get a tunnel.
             startWatchdog();
         } catch (RuntimeException e) {
             FileLog.e("Unable to prepare the Cloudflared tunnel service", e);
@@ -99,8 +101,7 @@ public final class CloudflaredTunnelService extends Service {
             if (Build.VERSION.SDK_INT >= 34) {
                 // Declare the manifest type explicitly. On Android 14+ a foreground
                 // service without a type can be rejected with
-                // MissingForegroundServiceTypeException, which left the tunnel
-                // permanently disconnected after it had been started successfully.
+                // MissingForegroundServiceTypeException.
                 startForeground(NOTIFICATION_ID, createNotification(),
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
             } else {
@@ -115,286 +116,61 @@ public final class CloudflaredTunnelService extends Service {
             stopSelf(startId);
             return START_NOT_STICKY;
         }
+        stopping = false;
         startWatchdog();
         if (intent != null && ACTION_START.equals(intent.getAction())) {
             String hostname = intent.getStringExtra(EXTRA_HOSTNAME);
             int port = intent.getIntExtra(EXTRA_PORT, 0);
-            if (CloudflaredTunnelManager.isValidHostname(hostname) && port > 0) {
-                startTunnel(hostname, port);
-            } else {
-                FileLog.e("Ignoring invalid Cloudflared tunnel service request");
-            }
+            startTunnel(hostname, port);
         } else if (intent == null) {
             for (Map.Entry<String, Integer> tunnel : CloudflaredTunnelManager.getStoredTunnels(this).entrySet()) {
                 startTunnel(tunnel.getKey(), tunnel.getValue());
             }
         }
-        // Deliberately not sticky: a tunnel that crashes the process would otherwise be
-        // restarted by the system straight into the same crash. The app restarts its
-        // tunnels from the first visible activity instead.
+        // Deliberately not sticky: a tunnel that crashes the process would otherwise
+        // be restarted by the system straight into the same crash. The app restarts
+        // its tunnels from the first visible activity instead.
         return START_NOT_STICKY;
     }
 
-    private void startTunnel(String hostname, int port) {
-        String key = hostname.toLowerCase(java.util.Locale.US);
-        Thread existing = workers.get(key);
-        if (existing != null && existing.isAlive()) {
+    private synchronized void startTunnel(String hostname, int port) {
+        if (hostname == null || !CloudflaredTunnelManager.isValidHostname(hostname) || port <= 0) {
+            FileLog.e("Ignoring invalid Cloudflared tunnel request");
             return;
         }
-        // The old thread may have died without removing its map entry (for
-        // example after an unexpected Error). Treat the map as a cache of live
-        // workers, not as proof that the tunnel is running.
-        workers.remove(key, existing);
-        stopping = false;
-        ports.put(key, port);
-        Thread worker = new Thread(() -> runTunnel(key, hostname, port), "Cloudflared-" + port);
-        workers.put(key, worker);
-        worker.start();
+        String key = hostname.toLowerCase(Locale.US);
+        TunnelSpec existingSpec = tunnels.get(key);
+        CloudflaredTunnelServer existingServer = servers.get(key);
+        if (existingSpec != null && existingSpec.matches(hostname, port)
+                && existingServer != null && existingServer.isRunning()) {
+            return;
+        }
+        if (existingServer != null) {
+            existingServer.stop();
+            servers.remove(key, existingServer);
+        }
+        tunnels.put(key, new TunnelSpec(hostname, port));
+        CloudflaredTunnelServer server = new CloudflaredTunnelServer(hostname, port, null, null);
+        if (server.start()) {
+            servers.put(key, server);
+        } else {
+            server.stop();
+        }
     }
 
     private void startWatchdog() {
         watchdogHandler.removeCallbacks(watchdog);
-        watchdogHandler.postDelayed(watchdog, 30000);
+        watchdogHandler.postDelayed(watchdog, WATCHDOG_INTERVAL_MS);
     }
 
-    /** Restarts workers that died without the service itself being destroyed. */
-    private void restartDeadWorkers() {
-        for (Map.Entry<String, Integer> tunnel : ports.entrySet()) {
-            String key = tunnel.getKey();
-            Thread worker = workers.get(key);
-            if (worker == null || !worker.isAlive()) {
-                FileLog.e("Cloudflared worker for " + key + " is not running; restarting");
-                workers.remove(key, worker);
-                startTunnel(key, tunnel.getValue());
+    /** Recreates a listener whose accept thread died without the service stopping. */
+    private void restartMissingServers() {
+        for (TunnelSpec spec : tunnels.values()) {
+            CloudflaredTunnelServer server = servers.get(spec.hostname.toLowerCase(Locale.US));
+            if (server == null || !server.isRunning()) {
+                FileLog.e("Cloudflared: listener for " + spec.hostname + " is not running; restarting");
+                startTunnel(spec.hostname, spec.port);
             }
-        }
-    }
-
-    private void runTunnel(String key, String hostname, int port) {
-        File executable = new File(getApplicationInfo().nativeLibraryDir, "libcloudflared.so");
-        if (!executable.isFile()) {
-            FileLog.e("Bundled Cloudflared ARM64 executable is missing");
-            workers.remove(key, Thread.currentThread());
-            ports.remove(key);
-            return;
-        }
-
-        File resolverConfig = new File(getCacheDir(), "cloudflared-resolv-" + port + ".conf");
-        int consecutiveFailures = 0;
-        long observedNetworkGeneration = networkGeneration;
-        while (!stopping) {
-            if (!awaitNetwork()) {
-                break;
-            }
-            long processStartedAt = SystemClock.elapsedRealtime();
-            Process process = null;
-            try {
-                writeResolverConfig(resolverConfig);
-                ProcessBuilder builder = new ProcessBuilder(
-                        executable.getAbsolutePath(),
-                        "access", "tcp",
-                        "--hostname", hostname,
-                        "--url", "127.0.0.1:" + port);
-                Map<String, String> environment = builder.environment();
-                environment.put("GODEBUG", "netdns=go");
-                environment.put("HOME", getFilesDir().getAbsolutePath());
-                environment.put("PATH", "/system/bin:/system/xbin");
-                builder.redirectInput(resolverConfig);
-                builder.redirectErrorStream(true);
-
-                process = builder.start();
-                processes.put(key, process);
-                FileLog.d("Cloudflared: started for " + hostname + " on 127.0.0.1:" + port);
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                    String line;
-                    int loggedLines = 0;
-                    while (!stopping && (line = reader.readLine()) != null) {
-                        // Cloudflared is chatty (every reconnect prints a burst). Logging
-                        // each line queues an unbounded amount of work in FileLog and can
-                        // fill the device, so keep only the startup window of a run.
-                        if (loggedLines < 120) {
-                            FileLog.d("Cloudflared: " + (line.length() > 400 ? line.substring(0, 400) : line));
-                        }
-                        loggedLines++;
-                    }
-                    if (loggedLines > 120) {
-                        FileLog.d("Cloudflared: suppressed " + (loggedLines - 120) + " more output lines");
-                    }
-                }
-                int exitCode = process.waitFor();
-                processes.remove(key, process);
-                if (!stopping) {
-                    FileLog.e("Cloudflared exited for " + hostname + " with status " + exitCode + "; retrying");
-                    if (observedNetworkGeneration != networkGeneration) {
-                        observedNetworkGeneration = networkGeneration;
-                        consecutiveFailures = 0;
-                        continue;
-                    }
-                    consecutiveFailures = SystemClock.elapsedRealtime() - processStartedAt >= 60000
-                            ? 0
-                            : Math.min(consecutiveFailures + 1, 5);
-                    Thread.sleep(retryDelayMs(consecutiveFailures));
-                }
-            } catch (InterruptedException e) {
-                if (stopping) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-                observedNetworkGeneration = networkGeneration;
-                consecutiveFailures = 0;
-            } catch (Exception e) {
-                FileLog.e("Cloudflared failed for " + hostname, e);
-                if (!stopping) {
-                    try {
-                        if (observedNetworkGeneration != networkGeneration) {
-                            observedNetworkGeneration = networkGeneration;
-                            consecutiveFailures = 0;
-                            continue;
-                        }
-                        consecutiveFailures = SystemClock.elapsedRealtime() - processStartedAt >= 60000
-                                ? 0
-                                : Math.min(consecutiveFailures + 1, 5);
-                        Thread.sleep(retryDelayMs(consecutiveFailures));
-                    } catch (InterruptedException interrupted) {
-                        if (stopping) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                        observedNetworkGeneration = networkGeneration;
-                        consecutiveFailures = 0;
-                    }
-                }
-            } finally {
-                if (process != null) {
-                    processes.remove(key, process);
-                    if (process.isAlive()) {
-                        process.destroy();
-                    }
-                }
-            }
-        }
-        workers.remove(key, Thread.currentThread());
-    }
-
-    private static long retryDelayMs(int consecutiveFailures) {
-        return Math.min(3000L << Math.max(0, consecutiveFailures - 1), 60000L);
-    }
-
-    private boolean awaitNetwork() {
-        synchronized (networkLock) {
-            while (!stopping && !networkAvailable) {
-                try {
-                    networkLock.wait();
-                } catch (InterruptedException e) {
-                    if (stopping) {
-                        Thread.currentThread().interrupt();
-                        return false;
-                    }
-                }
-            }
-            return !stopping;
-        }
-    }
-
-    private void registerNetworkCallback() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-            return;
-        }
-        connectivityManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (connectivityManager == null) {
-            FileLog.e("Unable to monitor network changes for Cloudflared");
-            return;
-        }
-        activeNetwork = connectivityManager.getActiveNetwork();
-        networkAvailable = activeNetwork != null;
-        hasSeenNetwork = activeNetwork != null;
-        networkCallback = new ConnectivityManager.NetworkCallback() {
-            @Override
-            public void onAvailable(Network network) {
-                // Connectivity callbacks run on a system thread with no crash
-                // guard: anything thrown here killed the process.
-                try {
-                    boolean changed;
-                    synchronized (this) {
-                        changed = hasSeenNetwork && (activeNetwork == null || !activeNetwork.equals(network));
-                        activeNetwork = network;
-                        hasSeenNetwork = true;
-                    }
-                    synchronized (networkLock) {
-                        networkAvailable = true;
-                        networkLock.notifyAll();
-                    }
-                    if (changed) {
-                        onNetworkChanged();
-                    }
-                } catch (Throwable t) {
-                    FileLog.e("Unable to handle the Cloudflared network change", t);
-                }
-            }
-
-            @Override
-            public void onLost(Network network) {
-                try {
-                    boolean changed;
-                    synchronized (this) {
-                        changed = network.equals(activeNetwork);
-                        if (changed) {
-                            activeNetwork = null;
-                        }
-                    }
-                    if (changed) {
-                        synchronized (networkLock) {
-                            networkAvailable = false;
-                            networkLock.notifyAll();
-                        }
-                        onNetworkChanged();
-                    }
-                } catch (Throwable t) {
-                    FileLog.e("Unable to handle the Cloudflared network loss", t);
-                }
-            }
-        };
-        try {
-            connectivityManager.registerDefaultNetworkCallback(networkCallback);
-        } catch (RuntimeException e) {
-            FileLog.e("Unable to register Cloudflared network callback", e);
-            networkCallback = null;
-            networkAvailable = true;
-        }
-    }
-
-
-    /**
-     * A default-network change does not require restarting cloudflared: the
-     * "access tcp" connector opens a fresh WebSocket to the edge for every
-     * local TCP connection, so new connections automatically use the new
-     * network. Killing the process here cut live sessions whenever the
-     * connectivity callbacks arrived (Wi-Fi/mobile handover, private DNS),
-     * which showed up as a reconnect and an "Updating" title every few
-     * seconds. Only bump the generation so a worker that has to restart later
-     * resets its failure backoff on the new network.
-     */
-    private void onNetworkChanged() {
-        networkGeneration++;
-    }
-
-    private void writeResolverConfig(File destination) throws Exception {
-        StringBuilder contents = new StringBuilder();
-        ConnectivityManager manager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-        Network network = manager != null ? manager.getActiveNetwork() : null;
-        LinkProperties properties = manager != null && network != null ? manager.getLinkProperties(network) : null;
-        if (properties != null) {
-            for (InetAddress address : properties.getDnsServers()) {
-                contents.append("nameserver ").append(address.getHostAddress()).append('\n');
-            }
-        }
-        if (contents.length() == 0) {
-            contents.append("nameserver 1.1.1.1\n");
-            contents.append("nameserver 8.8.8.8\n");
-        }
-        try (FileOutputStream output = new FileOutputStream(destination, false)) {
-            output.write(contents.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-            output.getFD().sync();
         }
     }
 
@@ -407,7 +183,7 @@ public final class CloudflaredTunnelService extends Service {
                 : new Notification.Builder(this);
         builder.setSmallIcon(R.drawable.notification)
                 .setContentTitle("Cloudflared tunnel")
-                .setContentText("Connecting through Cloudflare; Access sign-in may be required")
+                .setContentText("Tunnel active")
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE);
         if (contentIntent != null) {
@@ -427,25 +203,14 @@ public final class CloudflaredTunnelService extends Service {
         }
     }
 
-    private void stopAll() {
+    private synchronized void stopAll() {
         stopping = true;
         watchdogHandler.removeCallbacks(watchdog);
-        if (connectivityManager != null && networkCallback != null) {
-            try {
-                connectivityManager.unregisterNetworkCallback(networkCallback);
-            } catch (IllegalArgumentException e) {
-                FileLog.e("Unable to unregister Cloudflared network callback", e);
-            }
-            networkCallback = null;
+        for (CloudflaredTunnelServer server : servers.values()) {
+            server.stop();
         }
-        for (Process process : processes.values()) {
-            process.destroy();
-        }
-        for (Thread worker : workers.values()) {
-            worker.interrupt();
-        }
-        processes.clear();
-        ports.clear();
+        servers.clear();
+        tunnels.clear();
     }
 
     @Override
