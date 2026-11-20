@@ -1,0 +1,24 @@
+name: Apply tunnel reconnect fix
+
+on:
+  push:
+    branches: [freebuff/tunnel-reconnect-fix]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply the patch
+        run: git apply tunnel-reconnect.patch
+      - name: Commit the fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelManager.java TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelService.java
+          git rm tunnel-reconnect.patch .github/workflows/apply-tunnel-reconnect.yml
+          git commit -m "fix: stop Cloudflared recovery from resetting connections"
+          git push origin HEAD:freebuff/tunnel-reconnect-fix
