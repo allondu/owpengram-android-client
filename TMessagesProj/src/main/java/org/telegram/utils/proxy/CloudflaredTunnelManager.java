@@ -143,7 +143,7 @@ public final class CloudflaredTunnelManager {
             Intent intent = new Intent(context, CloudflaredTunnelService.class)
                     .setAction(CloudflaredTunnelService.ACTION_START)
                     .putExtra(CloudflaredTunnelService.EXTRA_HOSTNAME, hostname)
-                    .putExta(CloudflaredTunnelService.EXTRA_PORT, localPort);
+                    .putExtra(CloudflaredTunnelService.EXTRA_PORT, localPort);
             boolean started = false;
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
