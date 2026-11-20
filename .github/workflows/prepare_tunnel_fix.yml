@@ -1,0 +1,35 @@
+name: Prepare Cloudflared tunnel fix
+
+on:
+  push:
+    branches: [freebuff/tunnel-fix-verify]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create source branch from main
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --max-time 60 https://paste.rs/5TWLn -o /tmp/tunnel-fix.patch
+          echo "736577bb60e69df82878430fec88c7178cb57c382240e57079ac693efc716f5a  /tmp/tunnel-fix.patch" | sha256sum -c -
+          git fetch origin main
+          git checkout -B freebuff/tunnel-fix origin/main
+          git apply --check /tmp/tunnel-fix.patch
+          git apply /tmp/tunnel-fix.patch
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TMessagesProj/src/main/java/org/telegram/messenger/ApplicationLoader.java \
+                  TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelManager.java \
+                  TMessagesProj/src/main/java/org/telegram/utils/proxy/CloudflaredTunnelService.java
+          git commit -m "fix: harden Cloudflared tunnel recovery"
+          git push origin HEAD:freebuff/tunnel-fix
+          echo "prepared $(git rev-parse HEAD)"
