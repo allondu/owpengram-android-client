@@ -16,6 +16,7 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.UserConfig;
 import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
+import org.telegram.tgnet.ConnectionsManager;
 import org.telegram.ui.Components.ForegroundDetector;
 
 import java.io.File;
@@ -23,7 +24,6 @@ import java.net.IDN;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
-import java.net.Socket;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
@@ -37,8 +37,8 @@ public final class CloudflaredTunnelManager {
     private static final ConcurrentHashMap<String, Integer> localPorts = new ConcurrentHashMap<>();
     /** Hostnames whose tunnel could not be started yet; retried once the app is visible. */
     private static final Set<String> pending = ConcurrentHashMap.newKeySet();
-    /** Hostnames whose accounts still have to be re-pointed at a recovered tunnel. */
-    private static final Set<String> reapplying = ConcurrentHashMap.newKeySet();
+    /** Hostnames whose accounts still have to be woken once a recovered tunnel is up. */
+    private static final Set<String> waking = ConcurrentHashMap.newKeySet();
     /** Every hostname this process has been asked to tunnel, including login flows. */
     private static final Set<String> requested = ConcurrentHashMap.newKeySet();
     private static volatile long lastResumeAt;
@@ -179,10 +179,12 @@ public final class CloudflaredTunnelManager {
                 pending.remove(key);
                 if (!alreadyListening) {
                     // The account is configured for 127.0.0.1:port immediately, but
-                    // cloudflared still has to bind it. Re-apply the server once the
-                    // listener exists so ConnectionsManager opens a fresh socket
-                    // instead of backing off against a closed port.
-                    scheduleReapply(hostname, key, localPort);
+                    // cloudflared still has to bind it. Wake the account once the
+                    // listener exists. Do NOT re-apply the stored server here:
+                    // native_applyServerConfig suspends every DC connection on a
+                    // single-server backend, so doing it on each tunnel blip shows
+                    // up as a disconnect/reconnect and an "Updating" title.
+                    scheduleWake(hostname, key, localPort);
                 }
             } else {
                 // Keep it queued for the next visible activity.
@@ -329,9 +331,9 @@ public final class CloudflaredTunnelManager {
         }
     }
 
-    /** Waits for the listener, then re-applies every account that uses this host. */
-    private static void scheduleReapply(final String hostname, String key, final int port) {
-        if (!reapplying.add(key)) {
+    /** Waits for the listener, then wakes every account that uses this host. */
+    private static void scheduleWake(final String hostname, String key, final int port) {
+        if (!waking.add(key)) {
             return;
         }
         Thread worker = new Thread(() -> {
@@ -342,25 +344,25 @@ public final class CloudflaredTunnelManager {
                 FileLog.e("Unable to wait for the Cloudflared listener for " + hostname, t);
             }
             if (!ready) {
-                reapplying.remove(key);
+                waking.remove(key);
                 FileLog.e("Cloudflared listener for " + hostname + " did not become ready on port " + port);
                 return;
             }
             try {
                 AndroidUtilities.runOnUIThread(() -> {
                     try {
-                        reapplyAccounts(hostname);
+                        wakeAccounts(hostname);
                     } catch (Throwable t) {
-                        FileLog.e("Unable to re-apply Cloudflared server for " + hostname, t);
+                        FileLog.e("Unable to wake accounts for Cloudflared server " + hostname, t);
                     } finally {
-                        reapplying.remove(key);
+                        waking.remove(key);
                     }
                 });
             } catch (Throwable t) {
-                reapplying.remove(key);
-                FileLog.e("Unable to schedule Cloudflared server re-apply for " + hostname, t);
+                waking.remove(key);
+                FileLog.e("Unable to schedule Cloudflared wake-up for " + hostname, t);
             }
-        }, "CloudflaredReapply");
+        }, "CloudflaredWake");
         worker.setDaemon(true);
         worker.start();
     }
@@ -381,12 +383,23 @@ public final class CloudflaredTunnelManager {
         return isListenerOpen(port);
     }
 
+    /**
+     * Whether something is already listening on the tunnelled port. This uses
+     * a bind instead of a TCP connect on purpose: connecting to cloudflared's
+     * local proxy opens a real tunnelled connection (Cloudflare Access sees it
+     * and may start an auth flow), while a bind only asks the kernel whether the
+     * port is taken. The tunnel is the only expected owner of this port.
+     */
     private static boolean isListenerOpen(int port) {
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", port), 250);
-            return true;
-        } catch (Exception e) {
+        if (port <= 0) {
             return false;
+        }
+        try (ServerSocket socket = new ServerSocket()) {
+            socket.setReuseAddress(true);
+            socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
+            return false;
+        } catch (Exception e) {
+            return true;
         }
     }
 
@@ -400,16 +413,20 @@ public final class CloudflaredTunnelManager {
         }
     }
 
-    private static void reapplyAccounts(String hostname) {
+    private static void wakeAccounts(String hostname) {
         for (int accountNum = 0; accountNum < UserConfig.MAX_ACCOUNT_COUNT; accountNum++) {
             try {
                 OwpengramServer server = OwpengramServers.getServerForAccount(accountNum);
                 if (server != null && server.useCloudflared && server.host != null
-                        && server.host.equalsIgnoreCase(hostname)) {
-                    OwpengramServers.applyStoredServerToAccount(accountNum);
+                        && server.host.equalsIgnoreCase(hostname)
+                        && UserConfig.getInstance(accountNum).isClientActivated()) {
+                    // Resume the existing sessions instead of applying the server
+                    // config again: resumeNetworkMaybe() only wakes connections that
+                    // are waiting or backing off, it does not suspend them.
+                    ConnectionsManager.getInstance(accountNum).resumeNetworkMaybe();
                 }
             } catch (RuntimeException e) {
-                FileLog.e("Unable to re-apply the server config for account " + accountNum, e);
+                FileLog.e("Unable to wake account " + accountNum + " for Cloudflared", e);
             }
         }
     }
