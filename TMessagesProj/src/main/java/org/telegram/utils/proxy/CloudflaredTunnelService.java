@@ -204,6 +204,7 @@ public final class CloudflaredTunnelService extends Service {
 
                 process = builder.start();
                 processes.put(key, process);
+                FileLog.d("Cloudflared: started for " + hostname + " on 127.0.0.1:" + port);
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                     String line;
                     int loggedLines = 0;
@@ -324,7 +325,7 @@ public final class CloudflaredTunnelService extends Service {
                         networkLock.notifyAll();
                     }
                     if (changed) {
-                        restartTunnelsForNetworkChange();
+                        onNetworkChanged();
                     }
                 } catch (Throwable t) {
                     FileLog.e("Unable to handle the Cloudflared network change", t);
@@ -346,7 +347,7 @@ public final class CloudflaredTunnelService extends Service {
                             networkAvailable = false;
                             networkLock.notifyAll();
                         }
-                        restartTunnelsForNetworkChange();
+                        onNetworkChanged();
                     }
                 } catch (Throwable t) {
                     FileLog.e("Unable to handle the Cloudflared network loss", t);
@@ -363,20 +364,18 @@ public final class CloudflaredTunnelService extends Service {
     }
 
 
-    private void restartTunnelsForNetworkChange() {
+    /**
+     * A default-network change does not require restarting cloudflared: the
+     * "access tcp" connector opens a fresh WebSocket to the edge for every
+     * local TCP connection, so new connections automatically use the new
+     * network. Killing the process here cut live sessions whenever the
+     * connectivity callbacks arrived (Wi-Fi/mobile handover, private DNS),
+     * which showed up as a reconnect and an "Updating" title every few
+     * seconds. Only bump the generation so a worker that has to restart later
+     * resets its failure backoff on the new network.
+     */
+    private void onNetworkChanged() {
         networkGeneration++;
-        for (Process process : processes.values()) {
-            try {
-                process.destroy();
-            } catch (Throwable ignored) {
-            }
-        }
-        for (Thread worker : workers.values()) {
-            try {
-                worker.interrupt();
-            } catch (Throwable ignored) {
-            }
-        }
     }
 
     private void writeResolverConfig(File destination) throws Exception {
