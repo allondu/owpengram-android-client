@@ -1,6 +1,9 @@
 name: Diagnose Cloudflared compile
 
 on:
+  push:
+    branches:
+      - freebuff/cloudflared-inprocess
   workflow_dispatch:
 
 permissions:
