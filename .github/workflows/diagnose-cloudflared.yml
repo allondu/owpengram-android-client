@@ -1,0 +1,80 @@
+name: Diagnose Cloudflared compile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+          lfs: false
+
+      - name: Checkout Android submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --depth=1 --recursive -- \
+            TMessagesProj/jni/td \
+            TMessagesProj/jni/tgcalls \
+            TMessagesProj/jni/tlottie \
+            TMessagesProj/jni/wallet-engine \
+            TMessagesProj/jni/third_party/absl \
+            TMessagesProj/jni/third_party/boost-regex \
+            TMessagesProj/jni/third_party/boringssl \
+            TMessagesProj/jni/third_party/dav1d \
+            TMessagesProj/jni/third_party/ffmpeg \
+            TMessagesProj/jni/third_party/libprisma \
+            TMessagesProj/jni/third_party/libvpx \
+            TMessagesProj/jni/third_party/libyuv \
+            TMessagesProj/jni/third_party/openh264 \
+            TMessagesProj/jni/third_party/wamr \
+            TMessagesProj/jni/third_party/xiph/ogg \
+            TMessagesProj/jni/third_party/xiph/opus \
+            TMessagesProj/jni/third_party/xiph/opusfile \
+            TMessagesProj/lib/jlatexmath \
+            TMessagesProj_Modules/media
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;27.2.12479018
+            cmake;3.22.1
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile Java and annotate errors
+        run: |
+          set +e
+          ./gradlew --no-daemon --console=plain --stacktrace \
+            -POWPENGRAM_BUILD=0 \
+            -POWPENGRAM_PUBLIC_HOST="${{ vars.OWPENGRAM_PUBLIC_HOST }}" \
+            -POWPENGRAM_APP_LINKS_VERIFIED="${{ vars.OWPENGRAM_APP_LINKS_VERIFIED }}" \
+            :TMessagesProj_AppStandalone:compileAfatDebugJavaWithJavac > /tmp/build.log 2>&1
+          status=$?
+          tail -n 100 /tmp/build.log
+          if [ "$status" -ne 0 ]; then
+            grep -nE '(^| )error:|FAILURE:|What went wrong|Caused by:|> Task .* FAILED|Execution failed|Could not (resolve|find|create|determine)' /tmp/build.log \
+              | tail -n 8 \
+              | while IFS= read -r line; do
+                  line="${line//\r/}"
+                  line="${line//\n/ }"
+                  line="${line//::/ :}"
+                  echo "::error::$line"
+                done
+            exit "$status"
+          fi
