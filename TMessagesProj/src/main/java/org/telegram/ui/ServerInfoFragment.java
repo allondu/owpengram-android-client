@@ -445,7 +445,7 @@ public class ServerInfoFragment extends BaseFragment {
             if (ctx == null || server == null) return null;
             int res = 0;
             if (TextUtils.isEmpty(server.logoPath)) {
-                if (org.telegram.owpengram.OwpengramServers.ID_OWPENGRAM.equals(server.id)) res = org.telegram.messenger.R.drawable.server_owpengram;
+                if (org.telegram.owpengram.OwpengramServers.ID_OWPENGRAM.equals(server.id)) res = org.telegram.messenger.R.drawable.logo_flag;
                 else if (org.telegram.owpengram.OwpengramServers.ID_TELEGRAM.equals(server.id)) res = org.telegram.messenger.R.drawable.server_telegram;
                 if (res == 0) return null;
             }
@@ -454,12 +454,24 @@ public class ServerInfoFragment extends BaseFragment {
             if (b == null) {
                 try {
                     b = res != 0
-                            ? android.graphics.BitmapFactory.decodeResource(ctx.getResources(), res)
+                            ? logoBitmap(ctx, res)
                             : android.graphics.BitmapFactory.decodeFile(server.logoPath);
                 } catch (Throwable ignore) {}
                 if (b != null) LOGO_CACHE.put(cacheKey, b);
             }
             return b;
+        }
+
+        private static android.graphics.Bitmap logoBitmap(Context ctx, int res) {
+            android.graphics.drawable.Drawable drawable = androidx.core.content.ContextCompat.getDrawable(ctx, res);
+            if (drawable == null) return null;
+            int size = Math.max(drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
+            if (size <= 0) size = Math.round(256 * ctx.getResources().getDisplayMetrics().density);
+            android.graphics.Bitmap bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            drawable.setBounds(0, 0, size, size);
+            drawable.draw(canvas);
+            return bitmap;
         }
     }
 }

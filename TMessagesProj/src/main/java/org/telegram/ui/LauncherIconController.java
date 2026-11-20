@@ -53,6 +53,7 @@ public class LauncherIconController {
 
     public enum LauncherIcon {
         DEFAULT("DefaultIcon", R.mipmap.icon_flag_launcher, 0, R.string.AppIconDefault),
+        FLAG_WHITE("FlagWhiteIcon", R.mipmap.icon_flag_launcher_white, 0, R.string.AppIconFlagWhite),
         DARK("VintageIcon", R.mipmap.app_icon_dark, 0, R.string.AppIconVintage),
         TRIAD_LIGHT("AquaIcon", R.mipmap.app_icon_triad_light, 0, R.string.AppIconAqua),
         TRIAD_DARK("PremiumIcon", R.mipmap.app_icon_triad_dark, 0, R.string.AppIconPremium);
