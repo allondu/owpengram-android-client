@@ -7,7 +7,7 @@ permissions:
   contents: write
 jobs:
   materialize:
-    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message != 'feat: native Cloudflared carrier (no local listener)'
+    if: "github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, 'native Cloudflared carrier')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
