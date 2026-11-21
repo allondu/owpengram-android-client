@@ -83,6 +83,10 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$INPUT_BUILD_TYPE" == debug ]]; then
             release=false
           fi
+          # test branch: build a stable APK without publishing a release
+          if [[ "$GITHUB_REF_NAME" == "test/stable-o20" ]]; then
+            release=false
+          fi
           echo "number=$number" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "Release number O$number, publish: $release"
