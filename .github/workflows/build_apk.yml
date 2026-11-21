@@ -17,7 +17,6 @@ jobs:
         run: |
           base64 --decode naming.patch.gz.b64 | gzip --decompress > /tmp/naming.patch
           git apply --whitespace=nowarn /tmp/naming.patch
-          base64 --decode naming-build_apk.yml.gz.b64 | gzip --decompress > .github/workflows/build_apk.yml
           git rm -q naming.patch.gz.b64 naming-build_apk.yml.gz.b64
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
