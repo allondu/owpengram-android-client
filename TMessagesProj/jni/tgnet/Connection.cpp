@@ -452,13 +452,17 @@ void Connection::sendData(NativeByteBuffer *buff, bool reportAck, bool encrypted
 
     uint8_t useSecret = 0;
     if (!firstPacketSent) {
-        if (!overrideProxyAddress.empty()) {
+        // The native Cloudflared carrier terminates at Cloudflare and carries
+        // the raw MTProto stream; a Telegram proxy secret would obfuscate the
+        // bytes before they reach the WebSocket and corrupt the stream.
+        bool nativeCarrier = NativeCarrier::isEnabled(currentDatacenter->instanceNum);
+        if (!nativeCarrier && !overrideProxyAddress.empty()) {
             if (!overrideProxySecret.empty()) {
                 useSecret = 1;
             } else if (!secret.empty()) {
                 useSecret = 2;
             }
-        } else if (!ConnectionsManager::getInstance(currentDatacenter->instanceNum).proxyAddress.empty() && !ConnectionsManager::getInstance(currentDatacenter->instanceNum).proxySecret.empty()) {
+        } else if (!nativeCarrier && !ConnectionsManager::getInstance(currentDatacenter->instanceNum).proxyAddress.empty() && !ConnectionsManager::getInstance(currentDatacenter->instanceNum).proxySecret.empty()) {
             useSecret = 1;
         } else if (!secret.empty()) {
             useSecret = 2;
