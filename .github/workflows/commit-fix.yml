@@ -1,0 +1,30 @@
+name: Commit sync fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply the verified patch and commit it
+        run: |
+          base64 --decode fix-updating.patch.gz.b64 | gzip --decompress > /tmp/fix-updating.patch
+          git apply --whitespace=nowarn /tmp/fix-updating.patch
+          # Leave only the source fix in the branch: drop the build harness.
+          git checkout origin/main -- .github/workflows/build_apk.yml
+          git rm -q fix-updating.patch.gz.b64
+          git rm -q .github/workflows/commit-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java \
+                  TMessagesProj/src/main/java/org/telegram/messenger/MessagesStorage.java
+          git commit -m "Fix sync staying on Updating after a dialogs reset"
+          git push origin HEAD:fix/updating-stuck
