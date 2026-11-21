@@ -227,7 +227,7 @@ void applyDatacenterAddress(JNIEnv *env, jclass c, jint instanceNum, jint datace
     }
 }
 
-void applyServerConfig(JNIEnv *env, jclass c, jint instanceNum, jstring host, jint port, jboolean isTelegram, jint mainDcId, jstring pemKey, jlong fingerprint, jboolean resetKeys, jboolean nativeCarrier) {
+void applyServerConfig(JNIEnv *env, jclass c, jint instanceNum, jstring host, jint port, jboolean isTelegram, jint mainDcId, jstring pemKey, jlong fingerprint, jboolean resetKeys) {
     const char *hostStr = env->GetStringUTFChars(host, 0);
     const char *keyStr = env->GetStringUTFChars(pemKey, 0);
     ConnectionsManager::getInstance(instanceNum).applyServerConfig(
@@ -237,8 +237,7 @@ void applyServerConfig(JNIEnv *env, jclass c, jint instanceNum, jstring host, ji
             (uint32_t) mainDcId,
             std::string(keyStr),
             (uint64_t) fingerprint,
-            resetKeys,
-            nativeCarrier);
+            resetKeys);
     if (hostStr != 0) {
         env->ReleaseStringUTFChars(host, hostStr);
     }
@@ -570,7 +569,7 @@ static JNINativeMethod ConnectionsManagerMethods[] = {
         {"native_cancelRequestsForGuid", "(II)V", (void *) cancelRequestsForGuid},
         {"native_bindRequestToGuid", "(III)V", (void *) bindRequestToGuid},
         {"native_applyDatacenterAddress", "(IILjava/lang/String;I)V", (void *) applyDatacenterAddress},
-        {"native_applyServerConfig", "(ILjava/lang/String;IZILjava/lang/String;JZZ)V", (void *) applyServerConfig},
+        {"native_applyServerConfig", "(ILjava/lang/String;IZILjava/lang/String;JZ)V", (void *) applyServerConfig},
         {"native_setProxySettings", "(ILjava/lang/String;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V", (void *) setProxySettings},
         {"native_getConnectionState", "(I)I", (void *) getConnectionState},
         {"native_setUserId", "(IJ)V", (void *) setUserId},
