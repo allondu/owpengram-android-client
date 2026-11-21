@@ -365,7 +365,8 @@ public class MessagesController extends BaseController implements NotificationCe
     public boolean firstGettingTask;
     public boolean registeringForPush;
     private long lastPushRegisterSendTime;
-    private boolean resetingDialogs;
+    private volatile boolean resetingDialogs;
+    private volatile int resetDialogsGeneration;
     private TLRPC.TL_messages_peerDialogs resetDialogsPinned;
     private TLRPC.messages_Dialogs resetDialogsAll;
     private SparseIntArray loadingPinnedDialogs = new SparseIntArray();
@@ -6627,6 +6628,7 @@ public class MessagesController extends BaseController implements NotificationCe
             createdDialogIds.clear();
             createdScheduledDialogIds.clear();
             gettingDifference = false;
+            resetDialogsGeneration++;
             resetDialogsPinned = null;
             resetDialogsAll = null;
         });
@@ -12877,15 +12879,21 @@ public class MessagesController extends BaseController implements NotificationCe
             }
             getUserConfig().setPinnedDialogsLoaded(1, false);
             resetingDialogs = true;
+            final int generation = ++resetDialogsGeneration;
             TLRPC.TL_messages_getPinnedDialogs req = new TLRPC.TL_messages_getPinnedDialogs();
             getConnectionsManager().sendRequest(req, (response, error) -> {
-                if (response != null) {
+                if (generation != resetDialogsGeneration) {
+                    return;
+                }
+                if (response instanceof TLRPC.TL_messages_peerDialogs) {
                     resetDialogsPinned = (TLRPC.TL_messages_peerDialogs) response;
                     for (int a = 0; a < resetDialogsPinned.dialogs.size(); a++) {
                         TLRPC.Dialog d = resetDialogsPinned.dialogs.get(a);
                         d.pinned = true;
                     }
                     resetDialogs(false, seq, newPts, date, qts);
+                } else {
+                    onDialogsResetFailed("getPinnedDialogs: " + (error != null ? error.text : "no response"));
                 }
             });
             TLRPC.TL_messages_getDialogs req2 = new TLRPC.TL_messages_getDialogs();
@@ -12893,9 +12901,14 @@ public class MessagesController extends BaseController implements NotificationCe
             req2.exclude_pinned = true;
             req2.offset_peer = new TLRPC.TL_inputPeerEmpty();
             getConnectionsManager().sendRequest(req2, (response, error) -> {
-                if (error == null) {
+                if (generation != resetDialogsGeneration) {
+                    return;
+                }
+                if (error == null && response instanceof TLRPC.messages_Dialogs) {
                     resetDialogsAll = (TLRPC.messages_Dialogs) response;
                     resetDialogs(false, seq, newPts, date, qts);
+                } else {
+                    onDialogsResetFailed("getDialogs: " + (error != null ? error.text : "no response"));
                 }
             });
         } else if (resetDialogsPinned != null && resetDialogsAll != null) {
@@ -13027,6 +13040,31 @@ public class MessagesController extends BaseController implements NotificationCe
             resetDialogsPinned = null;
             resetDialogsAll = null;
         }
+    }
+
+    /**
+     * Abandons a dialogs reset that cannot finish. Without this, a failed
+     * getPinnedDialogs/getDialogs call (or a storage error) leaves
+     * {@link #gettingDifference} and the connection's isUpdating flag set, so
+     * the title stays on "Updating..." with no request in flight and sync never
+     * restarts. Fall back to the normal difference queue from the old cursor:
+     * the TooLong fast-skip only applies to the first request after launch, so
+     * this path pages through the difference instead of triggering another reset.
+     */
+    void onDialogsResetFailed(String reason) {
+        if (!resetingDialogs) {
+            return;
+        }
+        FileLog.e("dialogs reset failed: " + reason + "; resuming difference");
+        resetDialogsGeneration++;
+        resetDialogsPinned = null;
+        resetDialogsAll = null;
+        Utilities.stageQueue.postRunnable(() -> {
+            resetingDialogs = false;
+            gettingDifference = false;
+            getConnectionsManager().setIsUpdating(false);
+            getDifference();
+        });
     }
 
     protected void completeDialogsReset(final TLRPC.messages_Dialogs dialogsRes, int messagesCount, int seq, int newPts, int date, int qts, LongSparseArray<TLRPC.Dialog> new_dialogs_dict, LongSparseArray<ArrayList<MessageObject>> new_dialogMessage, TLRPC.Message lastMessage) {
@@ -16935,6 +16973,15 @@ public class MessagesController extends BaseController implements NotificationCe
             if (error == null) {
                 TLRPC.updates_Difference res = (TLRPC.updates_Difference) response;
                 if (res instanceof TLRPC.TL_updates_differenceTooLong) {
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("differenceTooLong pts = " + res.pts);
+                    }
+                    // TooLong is the one successful difference response that does
+                    // not finish the sync itself: the dialogs reset and the follow-up
+                    // getDifference() do. Clear the title now so a failed or stuck
+                    // reset cannot leave the UI on "Updating..." forever; the
+                    // follow-up request turns it back on when it actually starts.
+                    getConnectionsManager().setIsUpdating(false);
                     AndroidUtilities.runOnUIThread(() -> {
                         loadedFullUsers.clear();
                         loadedFullChats.clear();
