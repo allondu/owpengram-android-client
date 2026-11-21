@@ -128,6 +128,7 @@ import org.telegram.tgnet.Vector;
 import org.telegram.tgnet.tl.TL_account;
 import org.telegram.tgnet.tl.TL_phone;
 import org.telegram.tgnet.tl.TL_update;
+import org.telegram.utils.proxy.CloudflaredMediaBridge;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.BottomSheet;
 import org.telegram.ui.ActionBar.Theme;
@@ -2906,6 +2907,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 	}
 
 	private void createGroupInstance(int type, boolean switchAccount, boolean isFirst) {
+		CloudflaredMediaBridge.start(currentAccount);
 		if (switchAccount) {
 			mySource[type] = 0;
 			if (type == CAPTURE_DEVICE_CAMERA) {
@@ -3465,8 +3467,15 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 			final Instance.ServerConfig serverConfig = Instance.getGlobalServerConfig();
 			OwpengramServer selectedServer = OwpengramServers.getServerForAccount(currentAccount);
 			final boolean cloudflaredCall = selectedServer != null && selectedServer.useCloudflared;
-			if (cloudflaredCall && BuildVars.LOGS_ENABLED) {
-				FileLog.d("Cloudflared carries server signaling only; call media uses advertised call endpoints");
+			if (cloudflaredCall) {
+				// The tunnel is TCP-only: mirror the WebRTC/TURN UDP endpoints into
+				// loopback listeners that forward over a second WebSocket.
+				CloudflaredMediaBridge.start(selectedServer.host);
+				if (BuildVars.LOGS_ENABLED) {
+					FileLog.d("Cloudflared call media uses the in-app TCP media bridge");
+				}
+			} else {
+				CloudflaredMediaBridge.stop();
 			}
 			final boolean enableAec = !(sysAecAvailable && serverConfig.useSystemAec);
 			final boolean enableNs = !(sysNsAvailable && serverConfig.useSystemNs);
@@ -4187,6 +4196,7 @@ public class VoIPService extends Service implements SensorEventListener, AudioMa
 		if (BuildVars.LOGS_ENABLED) {
 			FileLog.d("=============== VoIPService STOPPING ===============");
 		}
+		CloudflaredMediaBridge.stop();
 		stopForeground(true);
 		stopRinging();
 		if (currentAccount >= 0) {
