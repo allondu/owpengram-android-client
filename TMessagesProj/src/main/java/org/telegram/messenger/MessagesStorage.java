@@ -4577,6 +4577,7 @@ public class MessagesStorage extends BaseController {
     public void resetDialogs(TLRPC.messages_Dialogs dialogsRes, int messagesCount, int seq, int newPts, int date, int qts, LongSparseArray<TLRPC.Dialog> new_dialogs_dict, LongSparseArray<ArrayList<MessageObject>> new_dialogMessage, TLRPC.Message lastMessage, int dialogsCount) {
         storageQueue.postRunnable(() -> {
             SQLiteCursor cursor = null;
+            boolean completedReset = false;
             try {
                 int maxPinnedNum = 0;
 
@@ -4673,57 +4674,70 @@ public class MessagesStorage extends BaseController {
                 long dialogsLoadOffsetAccess = 0;
 
                 totalDialogsLoadCount += dialogsRes.dialogs.size();
-                dialogsLoadOffsetId = lastMessage.id;
-                dialogsLoadOffsetDate = lastMessage.date;
-                if (lastMessage.peer_id.channel_id != 0) {
-                    dialogsLoadOffsetChannelId = lastMessage.peer_id.channel_id;
-                    dialogsLoadOffsetChatId = 0;
-                    dialogsLoadOffsetUserId = 0;
-                    for (int a = 0; a < dialogsRes.chats.size(); a++) {
-                        TLRPC.Chat chat = dialogsRes.chats.get(a);
-                        if (chat.id == dialogsLoadOffsetChannelId) {
-                            dialogsLoadOffsetAccess = chat.access_hash;
-                            break;
+                // getDialogs can legally return an empty messages list (for
+                // example an account whose chats are all channels/groups). The
+                // old code dereferenced lastMessage unconditionally, threw inside
+                // this try, and never called completeDialogsReset(), leaving sync
+                // permanently stuck on "Updating...".
+                if (lastMessage != null) {
+                    dialogsLoadOffsetId = lastMessage.id;
+                    dialogsLoadOffsetDate = lastMessage.date;
+                    if (lastMessage.peer_id.channel_id != 0) {
+                        dialogsLoadOffsetChannelId = lastMessage.peer_id.channel_id;
+                        dialogsLoadOffsetChatId = 0;
+                        dialogsLoadOffsetUserId = 0;
+                        for (int a = 0; a < dialogsRes.chats.size(); a++) {
+                            TLRPC.Chat chat = dialogsRes.chats.get(a);
+                            if (chat.id == dialogsLoadOffsetChannelId) {
+                                dialogsLoadOffsetAccess = chat.access_hash;
+                                break;
+                            }
+                        }
+                    } else if (lastMessage.peer_id.chat_id != 0) {
+                        dialogsLoadOffsetChatId = lastMessage.peer_id.chat_id;
+                        dialogsLoadOffsetChannelId = 0;
+                        dialogsLoadOffsetUserId = 0;
+                        for (int a = 0; a < dialogsRes.chats.size(); a++) {
+                            TLRPC.Chat chat = dialogsRes.chats.get(a);
+                            if (chat.id == dialogsLoadOffsetChatId) {
+                                dialogsLoadOffsetAccess = chat.access_hash;
+                                break;
+                            }
+                        }
+                    } else if (lastMessage.peer_id.user_id != 0) {
+                        dialogsLoadOffsetUserId = lastMessage.peer_id.user_id;
+                        dialogsLoadOffsetChatId = 0;
+                        dialogsLoadOffsetChannelId = 0;
+                        for (int a = 0; a < dialogsRes.users.size(); a++) {
+                            TLRPC.User user = dialogsRes.users.get(a);
+                            if (user.id == dialogsLoadOffsetUserId) {
+                                dialogsLoadOffsetAccess = user.access_hash;
+                                break;
+                            }
                         }
                     }
-                } else if (lastMessage.peer_id.chat_id != 0) {
-                    dialogsLoadOffsetChatId = lastMessage.peer_id.chat_id;
-                    dialogsLoadOffsetChannelId = 0;
-                    dialogsLoadOffsetUserId = 0;
-                    for (int a = 0; a < dialogsRes.chats.size(); a++) {
-                        TLRPC.Chat chat = dialogsRes.chats.get(a);
-                        if (chat.id == dialogsLoadOffsetChatId) {
-                            dialogsLoadOffsetAccess = chat.access_hash;
-                            break;
-                        }
-                    }
-                } else if (lastMessage.peer_id.user_id != 0) {
-                    dialogsLoadOffsetUserId = lastMessage.peer_id.user_id;
-                    dialogsLoadOffsetChatId = 0;
-                    dialogsLoadOffsetChannelId = 0;
-                    for (int a = 0; a < dialogsRes.users.size(); a++) {
-                        TLRPC.User user = dialogsRes.users.get(a);
-                        if (user.id == dialogsLoadOffsetUserId) {
-                            dialogsLoadOffsetAccess = user.access_hash;
-                            break;
-                        }
+                    for (int a = 0; a < 2; a++) {
+                        getUserConfig().setDialogsLoadOffset(a,
+                                dialogsLoadOffsetId,
+                                dialogsLoadOffsetDate,
+                                dialogsLoadOffsetUserId,
+                                dialogsLoadOffsetChatId,
+                                dialogsLoadOffsetChannelId,
+                                dialogsLoadOffsetAccess);
                     }
                 }
                 for (int a = 0; a < 2; a++) {
-                    getUserConfig().setDialogsLoadOffset(a,
-                            dialogsLoadOffsetId,
-                            dialogsLoadOffsetDate,
-                            dialogsLoadOffsetUserId,
-                            dialogsLoadOffsetChatId,
-                            dialogsLoadOffsetChannelId,
-                            dialogsLoadOffsetAccess);
                     getUserConfig().setTotalDialogsCount(a, totalDialogsLoadCount);
                 }
                 getUserConfig().draftsLoaded = false;
                 getUserConfig().saveConfig(false);
                 getMessagesController().completeDialogsReset(dialogsRes, messagesCount, seq, newPts, date, qts, new_dialogs_dict, new_dialogMessage, lastMessage);
+                completedReset = true;
             } catch (Exception e) {
                 checkSQLException(e);
+                if (!completedReset) {
+                    getMessagesController().onDialogsResetFailed("storage: " + e);
+                }
             } finally {
                 if (database != null) {
                     database.commitTransaction();
