@@ -135,7 +135,7 @@ public final class OwpengramUpdateDownloader {
             connection.setConnectTimeout(20_000);
             connection.setReadTimeout(30_000);
             connection.setInstanceFollowRedirects(true);
-            connection.setRequestProperty("User-Agent", "OwpenGram-Android/" + BuildVars.OWPENGRAM_BUILD);
+            connection.setRequestProperty("User-Agent", "OwpenGram-Android/" + BuildVars.getOwpenGramVersion());
             connection.setRequestProperty("Accept", "application/octet-stream");
             final int response = connection.getResponseCode();
             if (response != HttpURLConnection.HTTP_OK) {

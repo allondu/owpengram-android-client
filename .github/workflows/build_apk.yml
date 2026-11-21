@@ -13,8 +13,12 @@ on:
         options: [both, debug, stable]
         default: both
       owpengram_build:
-        description: 'Release number (the N in tag ON); leave empty for the next free number, 0 for a local/dev build with no release'
+        description: 'Release version (e.g. 20.a); leave empty for the next free release, 0 for a local/dev build with no release'
         default: ''
+      publish:
+        description: 'Create the GitHub release after a successful stable build'
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,14 +38,16 @@ env:
   ANDROID_SDK_PATH: /usr/local/lib/android/sdk
 
 jobs:
-  # The release number is baked into the APK (BuildVars.OWPENGRAM_BUILD) and the
-  # updater compares it with the newest O<N> release, so it has to be decided
-  # before anything is built. Every push to main publishes the next free number.
+  # The release code is baked into the APK (BuildVars.OWPENGRAM_BUILD) and the
+  # updater compares it with the newest O<version> release, so it has to be
+  # decided before anything is built. Every push to main publishes the next
+  # free version (O19 -> O20.a -> O20.b ... -> O20.z -> O21.a).
   version:
-    name: Release number
+    name: Release version
     runs-on: ubuntu-latest
     outputs:
-      number: ${{ steps.resolve.outputs.number }}
+      version: ${{ steps.resolve.outputs.version }}
+      code: ${{ steps.resolve.outputs.code }}
       release: ${{ steps.resolve.outputs.release }}
     steps:
       - uses: actions/checkout@v4
@@ -50,42 +56,101 @@ jobs:
           fetch-depth: 1
           lfs: false
 
-      - name: Resolve release number
+      - name: Resolve release version
         id: resolve
         env:
           INPUT_BUILD: ${{ github.event.inputs.owpengram_build }}
           INPUT_BUILD_TYPE: ${{ github.event.inputs.build_type }}
+          INPUT_PUBLISH: ${{ github.event.inputs.publish }}
         run: |
-          number=0
+          version=0
+          code=0
           release=false
           if [[ "$GITHUB_REF" == refs/tags/O* ]]; then
-            number="${GITHUB_REF#refs/tags/O}"
+            version="${GITHUB_REF#refs/tags/O}"
+            if [[ "$version" =~ ^([0-9]+)\.([a-z])$ ]]; then
+              code=$((10#${BASH_REMATCH[1]} * 100 + $(printf '%d' "'${BASH_REMATCH[2]}") - 96))
+            elif [[ "$version" =~ ^([0-9]+)$ ]]; then
+              code=$((10#${BASH_REMATCH[1]}))
+            else
+              echo "::error::Release tag must look like O20.a or O19, got O$version"
+              exit 1
+            fi
             release=true
           elif [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # nothing is published from a pull request
-            number=0
+            version=0
+            code=0
           elif [[ -n "$INPUT_BUILD" ]]; then
-            number="$INPUT_BUILD"
-            if [[ "$number" != 0 ]]; then release=true; fi
+            version="$INPUT_BUILD"
+            if [[ "$version" == "0" ]]; then
+              code=0
+            elif [[ "$version" =~ ^([0-9]+)\.([a-z])$ ]]; then
+              code=$((10#${BASH_REMATCH[1]} * 100 + $(printf '%d' "'${BASH_REMATCH[2]}") - 96))
+            elif [[ "$version" =~ ^([0-9]+)$ ]]; then
+              # A bare number from older scripts means the first letter release.
+              version="${version}.a"
+              code=$((10#${BASH_REMATCH[1]} * 100 + 1))
+            else
+              echo "::error::OWPENGRAM_VERSION must look like 20.a (or 0), got '$version'"
+              exit 1
+            fi
+            if [[ "$code" != 0 ]]; then release=true; fi
           else
-            # one past the highest O<N> tag that already exists
-            latest="$(git ls-remote --tags --refs origin 'refs/tags/O*' \
-              | sed -n 's#.*refs/tags/[Oo]\([0-9][0-9]*\)$#\1#p' \
-              | sort -n | tail -1)"
-            number="$(( ${latest:-0} + 1 ))"
+            # Next release: O19 -> O20.a, O20.a -> O20.b, O20.z -> O21.a.
+            best_code=0
+            best_version=""
+            best_major=0
+            best_letter=""
+            while IFS= read -r tag; do
+              tag="${tag#refs/tags/}"
+              tag="${tag#[Oo]}"
+              if [[ "$tag" =~ ^([0-9]+)\.([a-z])$ ]]; then
+                major=$((10#${BASH_REMATCH[1]}))
+                letter=${BASH_REMATCH[2]}
+                candidate=$((major * 100 + $(printf '%d' "'$letter") - 96))
+              elif [[ "$tag" =~ ^([0-9]+)$ ]]; then
+                major=$((10#${BASH_REMATCH[1]}))
+                letter=""
+                candidate=$major
+              else
+                continue
+              fi
+              if (( candidate > best_code )); then
+                best_code=$candidate
+                best_version=$tag
+                best_major=$major
+                best_letter=$letter
+              fi
+            done < <(git ls-remote --tags --refs origin 'refs/tags/O*' | sed 's#.*refs/tags/##')
+            if [[ -n "$best_letter" ]]; then
+              if [[ "$best_letter" == "z" ]]; then
+                version="$((best_major + 1)).a"
+              else
+                alphabet=abcdefghijklmnopqrstuvwxyz
+                next_index=$(( $(printf '%d' "'$best_letter") - 97 + 1 ))
+                version="$best_major.${alphabet:next_index:1}"
+              fi
+            elif [[ -n "$best_version" ]]; then
+              version="$((best_major + 1)).a"
+            else
+              version="1.a"
+            fi
+            code=$((10#${version%%.*} * 100 + $(printf '%d' "'${version##*.}") - 96))
             release=true
           fi
-          if ! [[ "$number" =~ ^[0-9]+$ ]]; then
-            echo "::error::OWPENGRAM_BUILD must be a whole number, got '$number'"
-            exit 1
-          fi
-          # a debug-only manual run builds an APK that is never published
+          # A debug-only or explicitly non-publishing manual run still produces
+          # an installable artifact, but never creates a GitHub release.
           if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$INPUT_BUILD_TYPE" == debug ]]; then
             release=false
           fi
-          echo "number=$number" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$INPUT_PUBLISH" == "false" ]]; then
+            release=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
-          echo "Release number O$number, publish: $release"
+          echo "Release O$version (code $code), publish: $release"
 
   apk:
     name: Standalone APK (${{ matrix.variant }})
@@ -226,7 +291,7 @@ jobs:
           echo "APK_DIR=TMessagesProj_AppStandalone/build/outputs/apk/afat/$dir" >> "$GITHUB_ENV"
           ./gradlew --no-daemon --stacktrace --build-cache \
             -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g" \
-            -POWPENGRAM_BUILD=${{ needs.version.outputs.number }} \
+            -POWPENGRAM_BUILD=${{ needs.version.outputs.code }} \
             -POWPENGRAM_PUBLIC_HOST="${{ vars.OWPENGRAM_PUBLIC_HOST }}" \
             -POWPENGRAM_APP_LINKS_VERIFIED="${{ vars.OWPENGRAM_APP_LINKS_VERIFIED }}" \
             -PNATIVE_COMPILER_LAUNCHER=ccache \
@@ -238,7 +303,7 @@ jobs:
       - name: Collect APKs
         id: apk
         run: |
-          base="owpengram-${{ matrix.variant }}-O${{ needs.version.outputs.number }}-${GITHUB_SHA::7}"
+          base="owpengram-${{ matrix.variant }}-O${{ needs.version.outputs.version }}-${GITHUB_SHA::7}"
           mkdir -p dist
           mapfile -t apks < <(find "$APK_DIR" -maxdepth 1 -type f -name '*.apk' -print | sort)
           if [ "${#apks[@]}" -eq 0 ]; then
@@ -261,10 +326,10 @@ jobs:
           # APKs are zip files already.
           compression-level: 0
 
-  # Publishes the stable APKs as the O<number> release the in-app updater looks
-  # for. The tag is created here, so nobody has to remember to push one.
+  # Publishes the stable APKs as the O<version> release the in-app updater
+  # looks for. The tag is created here, so nobody has to remember to push one.
   release:
-    name: Publish O${{ needs.version.outputs.number }}
+    name: Publish O${{ needs.version.outputs.version }}
     needs: [version, apk]
     if: needs.version.outputs.release == 'true'
     runs-on: ubuntu-latest
@@ -295,7 +360,7 @@ jobs:
       # updater can hand each device the build it can actually run.
       - name: Name APKs
         env:
-          TAG: O${{ needs.version.outputs.number }}
+          TAG: O${{ needs.version.outputs.version }}
         run: |
           cd dist
           shopt -s nullglob
@@ -316,7 +381,7 @@ jobs:
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: O${{ needs.version.outputs.number }}
+          TAG: O${{ needs.version.outputs.version }}
         run: |
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             # a re-run for a number that is already published: replace the APKs

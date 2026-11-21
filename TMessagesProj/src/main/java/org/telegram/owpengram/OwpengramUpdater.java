@@ -43,9 +43,9 @@ import java.util.regex.Pattern;
  * whichever server the active account lives on, and for a Telegram account that
  * is Telegram itself, which would offer its own app instead of ours.
  *
- * Releases are tagged O1, O2, ...; the running build knows its own number
- * (OWPENGRAM_BUILD, given to the build script for every release; 0 = a local
- * dev build, which never checks).
+ * Releases are tagged O1, O2, ... and then O19, O20.a ... O20.z, O21.a ...;
+ * the running build knows its own numeric code (OWPENGRAM_BUILD, given to the
+ * build script for every release; 0 = a local dev build, which never checks).
  */
 public final class OwpengramUpdater {
 
@@ -53,7 +53,7 @@ public final class OwpengramUpdater {
     private static final long PROMPT_INTERVAL_MS = 24L * 60 * 60 * 1000;
     private static final int MAX_RESPONSE_BYTES = 512 * 1024;
     private static final int MAX_NOTES_CHARS = 4000;
-    private static final Pattern TAG = Pattern.compile("^[Oo](\\d+)$");
+    private static final Pattern TAG = Pattern.compile("^[Oo](\\d+)(?:\\.([a-z]))?$");
 
     private static final String PREFS = "owpengram_updater";
     private static final String KEY_BUILD = "build";
@@ -84,7 +84,7 @@ public final class OwpengramUpdater {
 
     /**
      * The repo the APKs are published to: the release workflow in this repo
-     * creates an O<N> release per build, so this is the repo to ask.
+     * creates an O<version> release per build, so this is the repo to ask.
      */
     private static final String LATEST_RELEASE_URL = "https://api.github.com/repos/allondu/owpengram-android-client/releases/latest";
 
@@ -250,7 +250,7 @@ public final class OwpengramUpdater {
             connection.setConnectTimeout(10_000);
             connection.setReadTimeout(15_000);
             connection.setRequestProperty("Accept", "application/vnd.github+json");
-            connection.setRequestProperty("User-Agent", "OwpenGram-Android/" + BuildVars.OWPENGRAM_BUILD);
+            connection.setRequestProperty("User-Agent", "OwpenGram-Android/" + BuildVars.getOwpenGramVersion());
             if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
                 throw new IllegalStateException("GitHub answered " + connection.getResponseCode());
             }
@@ -286,7 +286,13 @@ public final class OwpengramUpdater {
         if (!matcher.matches()) {
             return null;
         }
-        final int build = Integer.parseInt(matcher.group(1));
+        final int major = Integer.parseInt(matcher.group(1));
+        final String letter = matcher.group(2);
+        // O19 (legacy) sorts before O19.a, which sorts before O20.a; the same
+        // major * 100 + letter encoding is used by BuildVars.getOwpenGramVersion().
+        final int build = letter == null
+                ? major
+                : major * 100 + (letter.charAt(0) - 'a' + 1);
         if (build <= BuildVars.OWPENGRAM_BUILD) {
             return null;
         }
@@ -302,8 +308,9 @@ public final class OwpengramUpdater {
 
         final TLRPC.TL_help_appUpdate update = new TLRPC.TL_help_appUpdate();
         update.id = build;
-        // shown as "Version O8" in the dialog: built from the release number, not copied from the tag text
-        update.version = "O" + build;
+        // shown as "Version O20.a" in the dialog: built from the parsed tag,
+        // not copied blindly from arbitrary release text
+        update.version = "O" + major + (letter != null ? "." + letter : "");
         update.text = notes(release.optString("body", ""));
         update.url = url;
         update.flags |= 4; // url

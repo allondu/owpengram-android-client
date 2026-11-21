@@ -253,30 +253,41 @@ try {
 
     Write-Ok "Build type: $BuildType"
 
-    # OWPENGRAM_BUILD is the release number this build ships under -- the N in
-    # GitHub tag "ON". The in-app updater offers any published release with a
-    # higher number and shows it as "ON". Same rule as the desktop client: an
-    # OWPENGRAM_BUILD environment variable skips the prompt (scripted use), and
-    # 0 means a local dev build that never checks for updates.
-    if ($env:OWPENGRAM_BUILD) {
-        $OwpengramBuild = $env:OWPENGRAM_BUILD
-        if ($OwpengramBuild -notmatch '^\d+$') { throw "OWPENGRAM_BUILD must be a whole number, got '$OwpengramBuild'" }
-    } else {
-        $OwpengramBuild = $null
-        do {
-            $answer = (Read-Host '  Release number for this build (the N in tag ON; blank = local dev build, no self-update)').Trim()
-            if ([string]::IsNullOrEmpty($answer)) { $answer = '0' }
-            if ($answer -match '^\d+$') {
-                $OwpengramBuild = $answer
-            } else {
-                Write-Host '  Enter a whole number, or leave blank for a local dev build.' -ForegroundColor Yellow
-            }
-        } while ($null -eq $OwpengramBuild)
+    # OWPENGRAM_VERSION is the release version this build ships under: the
+    # suffix of GitHub tag "O<version>" (O20.a, O20.b, ..., O21.a). The numeric
+    # BuildVars code is major * 100 + letter (O20.a -> 2001) so Android's
+    # versionCode keeps increasing monotonically. An OWPENGRAM_VERSION
+    # environment variable skips the prompt; legacy OWPENGRAM_BUILD values are
+    # accepted too. 0 means a local dev build that never checks for updates.
+    $OwpengramVersion = $null
+    if ($env:OWPENGRAM_VERSION) {
+        $OwpengramVersion = $env:OWPENGRAM_VERSION.Trim()
+    } elseif ($env:OWPENGRAM_BUILD) {
+        $OwpengramVersion = $env:OWPENGRAM_BUILD.Trim()
     }
-    if ($OwpengramBuild -eq '0') {
-        Write-Ok 'Release number: 0 (local dev build -- self-update stays off)'
+    if ($OwpengramVersion) {
+        if ($OwpengramVersion -notmatch '^\d+(?:\.?[a-z])?$') {
+            throw "OWPENGRAM_VERSION must look like 20.a (or 0), got '$OwpengramVersion'"
+        }
     } else {
-        Write-Ok "Release number: $OwpengramBuild (must match tag O$OwpengramBuild once this is published)"
+        do {
+            $answer = (Read-Host '  Release version for this build (e.g. 20.a; blank = local dev build, no self-update)').Trim()
+            if ([string]::IsNullOrEmpty($answer)) { $answer = '0' }
+            if ($answer -match '^\d+(?:\.?[a-z])?$') {
+                $OwpengramVersion = $answer
+            } else {
+                Write-Host '  Enter a version like 20.a, or leave blank for a local dev build.' -ForegroundColor Yellow
+            }
+        } while ($null -eq $OwpengramVersion)
+    }
+    if ($OwpengramVersion -eq '0') {
+        $OwpengramBuild = 0
+        Write-Ok 'Release version: 0 (local dev build -- self-update stays off)'
+    } else {
+        if ($OwpengramVersion -notmatch '\.') { $OwpengramVersion = "$OwpengramVersion.a" }
+        $versionParts = $OwpengramVersion.Split('.')
+        $OwpengramBuild = [int]$versionParts[0] * 100 + (([int][char]$versionParts[1]) - 96)
+        Write-Ok "Release version: $OwpengramVersion (tag O$OwpengramVersion, code $OwpengramBuild)"
     }
     # A -P project property beats gradle.properties, so nothing in the repo is edited
     $GradleTask = "$GradleTask -POWPENGRAM_BUILD=$OwpengramBuild"
