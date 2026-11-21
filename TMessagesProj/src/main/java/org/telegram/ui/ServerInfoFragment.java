@@ -199,7 +199,9 @@ public class ServerInfoFragment extends BaseFragment {
 
         // Endpoint
         TextView epTv = new TextView(context);
-        epTv.setText(server.useCloudflared
+        epTv.setText(server.usesNativeCloudflared()
+                ? server.host + " (Cloudflared native)"
+                : server.useCloudflared
                 ? server.host + " (Cloudflared)"
                 : server.host + ":" + server.port);
         epTv.setTextSize(12);

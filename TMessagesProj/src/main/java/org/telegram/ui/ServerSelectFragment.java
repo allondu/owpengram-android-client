@@ -207,6 +207,11 @@ public class ServerSelectFragment extends BaseFragment {
     }
 
     private int checkServerConnection(OwpengramServer server, long tunnelTimeoutMs) {
+        if (server.connectionMode == OwpengramServer.CONNECTION_CLOUDFLARED_NATIVE) {
+            // There is no local listener to probe in native mode: tgnet opens the
+            // WebSocket itself when the account connects, so let it proceed.
+            return 0;
+        }
         if (!server.useCloudflared) {
             return pingTcp(server.host, server.port);
         }
@@ -679,7 +684,9 @@ public class ServerSelectFragment extends BaseFragment {
                     android.graphics.Shader.TileMode.CLAMP));
 
             nameTv.setText(server.name);
-            endpointTv.setText(server.useCloudflared
+            endpointTv.setText(server.usesNativeCloudflared()
+                    ? server.host + " (Cloudflared native)"
+                    : server.useCloudflared
                     ? server.host + " (Cloudflared)"
                     : server.host + ":" + server.port);
 
