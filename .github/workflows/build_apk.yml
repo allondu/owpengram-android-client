@@ -15,6 +15,10 @@ on:
       owpengram_build:
         description: 'Release number (the N in tag ON); leave empty for the next free number, 0 for a local/dev build with no release'
         default: ''
+      commit_fix:
+        description: 'Commit the patched source to this branch instead of building'
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -87,9 +91,41 @@ jobs:
           echo "release=$release" >> "$GITHUB_OUTPUT"
           echo "Release number O$number, publish: $release"
 
+  # One-shot helper for this test branch: applies the patch that produced the
+  # verified build and pushes the source change, then removes the patch harness.
+  commit:
+    name: Commit source fix
+    needs: version
+    if: github.event.inputs.commit_fix == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 0
+          lfs: false
+
+      - name: Apply and commit the fix
+        run: |
+          base64 --decode fix-updating.patch.gz.b64 | gzip --decompress > /tmp/fix-updating.patch
+          git apply --whitespace=nowarn /tmp/fix-updating.patch
+          git checkout origin/main -- .github/workflows/build_apk.yml
+          git rm -q fix-updating.patch.gz.b64
+          git rm -q .github/workflows/commit-fix.yml || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java \
+                  TMessagesProj/src/main/java/org/telegram/messenger/MessagesStorage.java
+          git status --short
+          git commit -m "Fix sync staying on Updating after a dialogs reset"
+          git push origin HEAD:fix/updating-stuck
+
   apk:
     name: Standalone APK (${{ matrix.variant }})
     needs: version
+    if: github.event.inputs.commit_fix != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
