@@ -33,6 +33,30 @@ public class BuildVars {
     public static String BUILD_VERSION_STRING = BuildConfig.BUILD_VERSION_STRING;
     public static int OWPENGRAM_BUILD = BuildConfig.OWPENGRAM_BUILD;
 
+    /**
+     * Human-readable release version for the numeric OWPENGRAM_BUILD code.
+     *
+     * Legacy releases used a plain number (O19 = 19). New releases use a
+     * major.letter pair encoded as major * 100 + letter index: O20.a = 2001,
+     * O20.z = 2026, O21.a = 2101. Keeping the code numeric preserves Android's
+     * monotonically increasing versionCode while the tag and UI can use a
+     * letter for follow-up releases within the same major.
+     */
+    public static String getOwpenGramVersion() {
+        final int code = OWPENGRAM_BUILD;
+        if (code <= 0) {
+            return "0";
+        }
+        if (code < 100) {
+            return String.valueOf(code);
+        }
+        final int letter = code % 100;
+        if (letter < 1 || letter > 26) {
+            return String.valueOf(code);
+        }
+        return (code / 100) + "." + (char) ('a' + letter - 1);
+    }
+
     public static int APP_ID = 3893395;
     public static String APP_HASH = "e2adbe11ee0f092ced6043c4e051fdda";
 
@@ -92,7 +116,7 @@ public class BuildVars {
             PrintWriter writer = new PrintWriter(buffer);
             writer.println("thread: " + (thread != null ? thread.getName() : "unknown"));
             writer.println("time: " + new Date());
-            writer.println("build: " + BUILD_VERSION_STRING + " (O" + OWPENGRAM_BUILD + ")");
+            writer.println("build: " + BUILD_VERSION_STRING + " (O" + getOwpenGramVersion() + ")");
             writer.println("device: " + Build.MANUFACTURER + " " + Build.MODEL
                     + ", Android " + Build.VERSION.RELEASE + " (SDK " + Build.VERSION.SDK_INT + ")");
             writer.println();

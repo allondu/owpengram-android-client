@@ -49,6 +49,10 @@ install is yours. The check asks GitHub directly, so it works the same
 whichever server the active account lives on. Local builds with release number
 `0` never check.
 
+Release tags use `O<major>.<letter>`: after `O19`, the next release is `O20.a`,
+then `O20.b` through `O20.z`, then `O21.a`. The integer build code and Android
+`versionCode` still increase monotonically (`O20.a` = code 2001).
+
 ## 🚀 Try it without setting up anything
 
 We run a **public OwpenGram server**, and it is already built into this client —
@@ -138,11 +142,14 @@ build, and remembers your answers in `.owpengram-build.local.json` (gitignored).
 It builds the `:TMessagesProj_AppStandalone` flavour — the unrestricted,
 Firebase-free one that ships in Releases.
 
-The script also asks for the **release number** of the build — the N in the
-GitHub tag `ON` (for example `8` for `O8`). The in-app updater offers any
-published release with a higher number. Leave it blank (or `0`) for a local
-build that never checks for updates. For scripted builds set the
-`OWPENGRAM_BUILD` environment variable and the question is skipped.
+The script also asks for the **release version** of the build — the suffix of
+the GitHub tag `O<version>` (for example `20.a` for `O20.a`). Releases advance
+through the alphabet (`O20.a`, `O20.b`, ..., `O20.z`) and then move to the next
+major (`O21.a`). The in-app updater offers any published release with a higher
+version. Leave it blank (or `0`) for a local build that never checks for
+updates. For scripted builds set the `OWPENGRAM_VERSION` environment variable
+(legacy integer `OWPENGRAM_BUILD` values are still accepted) and the question
+is skipped.
 
 **Requirements:** JDK 17+, Android SDK (compile/target API 36, build-tools
 36.0.0, NDK 27.2.12479018), Git. Minimum supported device API is 23
