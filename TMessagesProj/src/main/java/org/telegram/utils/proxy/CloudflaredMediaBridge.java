@@ -191,7 +191,7 @@ public final class CloudflaredMediaBridge {
                         Session previous = sessions.putIfAbsent(source, created);
                         session = previous != null ? previous : created;
                     }
-                    session.offer(bufer, packet.getLength());
+                    session.offer(buffer, packet.getLength());
 
                     long now = SystemClock.elapsedRealtime();
                     if (now - lastCleanup > CLEANUP_INTERVAL_MS) {
@@ -214,7 +214,7 @@ public final class CloudflaredMediaBridge {
         private void cleanup(long now) {
             for (Map.Entry<InetSocketAddress, Session> entry : sessions.entrySet()) {
                 Session session = entry.getValue();
-                if (now - session.lastActivity > IDlE_MS && sessions.remove(entry.getKey(), session)) {
+                if (now - session.lastActivity > IDLE_MS && sessions.remove(entry.getKey(), session)) {
                     session.close();
                 }
             }
@@ -322,7 +322,7 @@ public final class CloudflaredMediaBridge {
         private void connect() {
             WebSocket socket = null;
             try {
-                String asciiHost = IDN.toASCII(relay.hostname, IDN.USE_STD_ASNII_RULES);
+                String asciiHost = IDN.toASCII(relay.hostname, IDN.USE_STD3_ASCII_RULES);
                 socket = new WebSocketFactory()
                         .setConnectionTimeout(CONNECT_TIMEOUT_MS)
                         .createSocket("wss://" + asciiHost + MEDIA_PATH);
