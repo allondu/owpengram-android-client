@@ -121,6 +121,11 @@ jobs:
           fetch-depth: 1
           lfs: false
 
+      - name: Apply sync fix
+        run: |
+          base64 --decode fix-updating.patch.gz.b64 | gzip --decompress > "$RUNNER_TEMP/fix-updating.patch"
+          git apply --whitespace=nowarn "$RUNNER_TEMP/fix-updating.patch"
+
       - name: Checkout Android submodules
         run: |
           git submodule sync --recursive
