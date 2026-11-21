@@ -31,6 +31,7 @@ import org.telegram.owpengram.OwpengramServer;
 import org.telegram.owpengram.OwpengramServers;
 import org.telegram.utils.proxy.CloudflaredTunnelManager;
 import org.telegram.ui.ActionBar.ActionBar;
+import org.telegram.ui.ActionBar.AlertDialog;
 import org.telegram.ui.ActionBar.BaseFragment;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Components.EditTextBoldCursor;
@@ -65,6 +66,7 @@ public class AddServerFragment extends BaseFragment {
     private boolean multiDcEnabled = false;
     private View cloudflaredToggle;
     private boolean useCloudflared;
+    private int connectionMode = OwpengramServer.CONNECTION_DIRECT;
 
     private TextView advancedHeader;
     private View advancedSection;
@@ -170,8 +172,8 @@ public class AddServerFragment extends BaseFragment {
         });
         content.addView(section2);
 
-        cloudflaredToggle = buildToggleRow(context, "Use Cloudflared",
-                "TCP tunnel for server traffic; calls use the call server's own media endpoints", useCloudflared);
+        cloudflaredToggle = buildToggleRow(context, "Connection mode",
+                connectionModeDescription(connectionMode), useCloudflared);
         section2.addView(cloudflaredToggle);
         fetchCloudflaredInfoButton = new TextView(context);
         fetchCloudflaredInfoButton.setText("Fetch server info through Cloudflared");
@@ -183,14 +185,8 @@ public class AddServerFragment extends BaseFragment {
         fetchCloudflaredInfoButton.setVisibility(View.GONE);
         fetchCloudflaredInfoButton.setOnClickListener(v -> fetchCloudflaredServerInfo());
         section2.addView(fetchCloudflaredInfoButton);
-        cloudflaredToggle.setOnClickListener(v -> {
-            useCloudflared = !useCloudflared;
-            cloudflaredFetchGeneration++;
-            updateCloudflaredToggleState();
-            addressField.setHint(useCloudflared ? "Cloudflare hostname (e.g. chat.example.com)" : "Address (host:port)");
-            lastFetchedAddress = "";
-            fetchPublicKeyForAddress();
-        });
+        cloudflaredToggle.setOnClickListener(v -> showConnectionModeDialog());
+        updateCloudflaredToggleState();
 
         // Section: advanced (collapsed by default -- only matters for servers
         // that don't serve their key/DC over /owpengram/server-info, or to
@@ -238,7 +234,8 @@ public class AddServerFragment extends BaseFragment {
             mainDcField.setText(String.valueOf(editingServer.mainDcId > 0
                     ? editingServer.mainDcId : DEFAULT_SINGLE_MAIN_DC));
             multiDcEnabled = editingServer.multiDc;
-            useCloudflared = editingServer.useCloudflared;
+            connectionMode = editingServer.connectionMode;
+            useCloudflared = editingServer.usesCloudflared();
             updateToggleState();
             updateCloudflaredToggleState();
             addressField.setHint(useCloudflared ? "Cloudflare hostname (e.g. chat.example.com)" : "Address (host:port)");
@@ -558,7 +555,8 @@ public class AddServerFragment extends BaseFragment {
         server.rsaPublicKey = rsaField.getText().toString().trim();
         server.multiDc     = multiDcEnabled;
         server.mainDcId    = mainDc;
-        server.useCloudflared = useCloudflared;
+        server.connectionMode = connectionMode;
+        server.useCloudflared = connectionMode != OwpengramServer.CONNECTION_DIRECT;
         if (fetchedLogoPath != null) {
             server.logoPath = fetchedLogoPath;
         }
@@ -674,6 +672,7 @@ public class AddServerFragment extends BaseFragment {
         textPart.addView(titleTv);
 
         TextView subTv = new TextView(context);
+        subTv.setTag("subtitle");
         subTv.setText(subtitle);
         subTv.setTextSize(12);
         subTv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText));
@@ -719,11 +718,73 @@ public class AddServerFragment extends BaseFragment {
     private void updateCloudflaredToggleState() {
         if (cloudflaredToggle != null) {
             TextView tv = cloudflaredToggle.findViewWithTag("toggle");
-            if (tv != null) updateToggleText(tv, useCloudflared);
+            if (tv != null) {
+                tv.setText(connectionModeLabel(connectionMode));
+                tv.setTextColor(Theme.getColor(connectionMode == OwpengramServer.CONNECTION_DIRECT
+                        ? Theme.key_windowBackgroundWhiteGrayText
+                        : Theme.key_switch2TrackChecked));
+            }
+            TextView sub = cloudflaredToggle.findViewWithTag("subtitle");
+            if (sub != null) {
+                sub.setText(connectionModeDescription(connectionMode));
+            }
         }
         if (fetchCloudflaredInfoButton != null) {
             fetchCloudflaredInfoButton.setVisibility(useCloudflared ? View.VISIBLE : View.GONE);
         }
+    }
+
+    private void showConnectionModeDialog() {
+        if (getParentActivity() == null) {
+            return;
+        }
+        final String[] items = {
+                "Direct TCP — no tunnel",
+                "Cloudflared — in-app carrier",
+                "Cloudflared — native carrier (beta)"
+        };
+        AlertDialog.Builder builder = new AlertDialog.Builder(getParentActivity());
+        builder.setTitle("Connection mode");
+        builder.setItems(items, (dialog, which) -> {
+            setConnectionMode(which);
+            dialog.dismiss();
+        });
+        builder.setNegativeButton("Cancel", null);
+        showDialog(builder.create());
+    }
+
+    private void setConnectionMode(int mode) {
+        connectionMode = mode;
+        useCloudflared = mode != OwpengramServer.CONNECTION_DIRECT;
+        cloudflaredFetchGeneration++;
+        lastFetchedAddress = "";
+        updateCloudflaredToggleState();
+        if (addressField != null) {
+            addressField.setHint(useCloudflared
+                    ? "Cloudflare hostname (e.g. chat.example.com)"
+                    : "Address (host:port)");
+        }
+        fetchPublicKeyForAddress();
+    }
+
+    private static String connectionModeLabel(int mode) {
+        if (mode == OwpengramServer.CONNECTION_CLOUDFLARED_NATIVE) {
+            return "Native";
+        }
+        if (mode == OwpengramServer.CONNECTION_CLOUDFLARED) {
+            return "In-app";
+        }
+        return "Direct";
+    }
+
+    private static String connectionModeDescription(int mode) {
+        if (mode == OwpengramServer.CONNECTION_CLOUDFLARED_NATIVE) {
+            return "WebSocket carrier inside tgnet: no local listener or foreground service. Needs a public Cloudflare hostname without Access.";
+        }
+        if (mode == OwpengramServer.CONNECTION_CLOUDFLARED) {
+            return "WebSocket carrier in the app: loopback listener and foreground service. Works with the current setup.";
+        }
+        return "Plain TCP to host:port; no Cloudflare involved.";
     }
 
     private View buildSaveButton(Context context) {

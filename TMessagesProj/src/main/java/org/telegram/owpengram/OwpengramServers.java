@@ -14,6 +14,7 @@ import org.telegram.messenger.FileLog;
 import org.telegram.messenger.MessagesController;
 import org.telegram.messenger.UserConfig;
 import org.telegram.tgnet.ConnectionsManager;
+import org.telegram.tgnet.NativeCarrier;
 import org.telegram.utils.proxy.CloudflaredTunnelManager;
 
 import org.telegram.messenger.AndroidUtilities;
@@ -376,14 +377,23 @@ public class OwpengramServers {
                 : (server.isTelegram ? 2 : 1);
         String connectionHost = server.host;
         int connectionPort = server.port;
-        if (server.useCloudflared) {
+        boolean nativeCarrier = false;
+        if (server.connectionMode == OwpengramServer.CONNECTION_CLOUDFLARED) {
             connectionHost = "127.0.0.1";
             connectionPort = CloudflaredTunnelManager.start(server.host);
             if (connectionPort == 0) {
                 FileLog.e("Unable to apply Cloudflared server: local tunnel port is unavailable");
                 return;
             }
+        } else if (server.connectionMode == OwpengramServer.CONNECTION_CLOUDFLARED_NATIVE) {
+            // The WebSocket carrier lives in tgnet and opens wss://<host>/ itself,
+            // so there is no local port and no foreground service. Cloudflare's
+            // TCP published application always terminates TLS on 443.
+            connectionHost = server.host;
+            connectionPort = 443;
+            nativeCarrier = true;
         }
+        NativeCarrier.setEnabled(accountNum, nativeCarrier);
         ConnectionsManager.native_applyServerConfig(
                 accountNum,
                 connectionHost,

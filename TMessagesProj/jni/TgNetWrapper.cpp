@@ -5,6 +5,7 @@
 #include "tgnet/ConnectionsManager.h"
 #include "tgnet/MTProtoScheme.h"
 #include "tgnet/ConnectionSocket.h"
+#include "tgnet/NativeCarrier.h"
 #include "tgnet/FileLog.h"
 #include "tgnet/Handshake.h"
 #include <openssl/rand.h>
@@ -39,6 +40,8 @@ jmethodID jclass_ConnectionsManager_getInitFlags;
 jmethodID jclass_ConnectionsManager_onPremiumFloodWait;
 jmethodID jclass_ConnectionsManager_onIntegrityCheckClassic;
 jmethodID jclass_ConnectionsManager_onCaptchaCheck;
+jclass jclass_NativeCarrier;
+jmethodID jclass_NativeCarrier_openWebSocket;
 
 bool check_utf8(const char *data, size_t len);
 
@@ -243,6 +246,10 @@ void applyServerConfig(JNIEnv *env, jclass c, jint instanceNum, jstring host, ji
     }
 }
 
+void setNativeCarrierEnabled(JNIEnv *env, jclass c, jint instanceNum, jboolean enabled) {
+    NativeCarrier::setEnabled(instanceNum, enabled);
+}
+
 void setProxySettings(JNIEnv *env, jclass c, jint instanceNum, jstring address, jint port, jstring username, jstring password, jstring secret) {
     const char *addressStr = env->GetStringUTFChars(address, 0);
     const char *usernameStr = env->GetStringUTFChars(username, 0);
@@ -407,6 +414,12 @@ class Delegate : public ConnectiosManagerDelegate {
         jstring domainName = jniEnv[instanceNum]->NewStringUTF(domain.c_str());
         jniEnv[instanceNum]->CallStaticVoidMethod(jclass_ConnectionsManager, jclass_ConnectionsManager_getHostByName, domainName, (jlong) (intptr_t) socket);
         jniEnv[instanceNum]->DeleteLocalRef(domainName);
+    }
+
+    void openWebSocket(std::string host, int32_t instanceNum, int32_t fd) {
+        jstring hostName = jniEnv[instanceNum]->NewStringUTF(host.c_str());
+        jniEnv[instanceNum]->CallStaticVoidMethod(jclass_NativeCarrier, jclass_NativeCarrier_openWebSocket, instanceNum, hostName, fd);
+        jniEnv[instanceNum]->DeleteLocalRef(hostName);
     }
 
     int32_t getInitFlags(int32_t instanceNum) {
@@ -618,6 +631,14 @@ extern "C" int registerNativeTgNetFunctions(JavaVM *vm, JNIEnv *env) {
         return JNI_FALSE;
     }
 
+    static const char *NativeCarrierClassPathName = "org/telegram/tgnet/NativeCarrier";
+    static JNINativeMethod NativeCarrierMethods[] = {
+            {"native_setEnabled", "(IZ)V", (void *) setNativeCarrierEnabled},
+    };
+    if (!registerNativeMethods(env, NativeCarrierClassPathName, NativeCarrierMethods, sizeof(NativeCarrierMethods) / sizeof(NativeCarrierMethods[0]))) {
+        return JNI_FALSE;
+    }
+
     DEBUG_REF("RequestTimeDelegate class");
     jclass_RequestTimeDelegate = (jclass) env->NewGlobalRef(env->FindClass("org/telegram/tgnet/RequestTimeDelegate"));
     if (jclass_RequestTimeDelegate == 0) {
@@ -711,6 +732,20 @@ extern "C" int registerNativeTgNetFunctions(JavaVM *vm, JNIEnv *env) {
     }
     jclass_ConnectionsManager_onCaptchaCheck = env->GetStaticMethodID(jclass_ConnectionsManager, "onCaptchaCheck", "(IILjava/lang/String;Ljava/lang/String;)V");
     if (jclass_ConnectionsManager_onCaptchaCheck == 0) {
+        return JNI_FALSE;
+    }
+    DEBUG_REF("NativeCarrier class");
+    jclass nativeCarrierClass = env->FindClass("org/telegram/tgnet/NativeCarrier");
+    if (nativeCarrierClass == 0) {
+        return JNI_FALSE;
+    }
+    jclass_NativeCarrier = (jclass) env->NewGlobalRef(nativeCarrierClass);
+    env->DeleteLocalRef(nativeCarrierClass);
+    if (jclass_NativeCarrier == 0) {
+        return JNI_FALSE;
+    }
+    jclass_NativeCarrier_openWebSocket = env->GetStaticMethodID(jclass_NativeCarrier, "openWebSocket", "(ILjava/lang/String;I)V");
+    if (jclass_NativeCarrier_openWebSocket == 0) {
         return JNI_FALSE;
     }
 

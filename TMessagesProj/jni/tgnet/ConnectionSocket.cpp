@@ -30,6 +30,7 @@
 #include "NativeByteBuffer.h"
 #include "BuffersStorage.h"
 #include "Connection.h"
+#include "NativeCarrier.h"
 #include "TLSHello.h"
 #include <random>
 
@@ -74,6 +75,14 @@ void ConnectionSocket::openConnection(std::string address, uint16_t port, std::s
     adjustWriteOpAfterResolve = false;
     tlsState = 0;
     ConnectionsManager::getInstance(instanceNum).attachConnection(this);
+
+    if (NativeCarrier::isEnabled(instanceNum)) {
+        // tgnet still owns a normal socket: one end of an AF_UNIX socketpair.
+        // Java carries the other end over wss://<hostname>/ and the epoll,
+        // timeout and byte-accounting paths keep working unchanged.
+        openWebSocketConnection(address);
+        return;
+    }
 
     memset(&socketAddress, 0, sizeof(sockaddr_in));
     memset(&socketAddress6, 0, sizeof(sockaddr_in6));
@@ -239,6 +248,43 @@ void ConnectionSocket::openConnectionInternal(bool ipv6) {
     }
     if (adjustWriteOpAfterResolve) {
         adjustWriteOp();
+    }
+}
+
+void ConnectionSocket::openWebSocketConnection(std::string hostname) {
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) socketpair failed", this);
+        closeSocket(1, -1);
+        return;
+    }
+    socketFd = fds[0];
+    if (fcntl(socketFd, F_SETFL, O_NONBLOCK) == -1) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) set O_NONBLOCK failed", this);
+        close(fds[1]);
+        closeSocket(1, -1);
+        return;
+    }
+    proxyAuthState = 0;
+    tlsState = 0;
+    onConnectedSent = false;
+    lastEventTime = ConnectionsManager::getInstance(instanceNum).getCurrentTimeMonotonicMillis();
+
+    eventMask.events = EPOLLOUT | EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLET;
+    eventMask.data.ptr = eventObject;
+    if (epoll_ctl(ConnectionsManager::getInstance(instanceNum).epolFd, EPOLL_CTL_ADD, socketFd, &eventMask) != 0) {
+        if (LOGS_ENABLED) DEBUG_E("connection(%p) epoll_ctl, adding websocket socket failed", this);
+        close(fds[1]);
+        closeSocket(1, -1);
+        return;
+    }
+
+    if (LOGS_ENABLED) DEBUG_D("connection(%p) carrying through websocket %s", this, hostname.c_str());
+    if (ConnectionsManager::getInstance(instanceNum).delegate != nullptr) {
+        ConnectionsManager::getInstance(instanceNum).delegate->openWebSocket(hostname, instanceNum, fds[1]);
+    } else {
+        close(fds[1]);
+        closeSocket(1, -1);
     }
 }
 

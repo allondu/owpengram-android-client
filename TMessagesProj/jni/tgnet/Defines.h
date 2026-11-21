@@ -157,6 +157,9 @@ typedef struct ConnectiosManagerDelegate {
     virtual void onRequestNewServerIpAndPort(int32_t second, int32_t instanceNum) = 0;
     virtual void onProxyError(int32_t instanceNum) = 0;
     virtual void getHostByName(std::string domain, int32_t instanceNum, ConnectionSocket *socket) = 0;
+    // Hands one end of a socketpair to Java, which pumps it over a Cloudflare
+    // Tunnel WebSocket. tgnet keeps the other end as a normal socket.
+    virtual void openWebSocket(std::string host, int32_t instanceNum, int32_t fd) = 0;
     virtual int32_t getInitFlags(int32_t instanceNum) = 0;
     virtual void onPremiumFloodWait(int32_t instanceNum, int32_t requestToken, bool isUpload) = 0;
     virtual void onIntegrityCheckClassic(int32_t instanceNum, int32_t requestToken, std::string project, std::string nonce) = 0;
